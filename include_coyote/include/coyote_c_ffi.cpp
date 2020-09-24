@@ -13,6 +13,7 @@
 #include "test.h"
 #include <cassert>
 #include <climits>
+#include <errno.h>
 
 // Require C++11
 #include <unordered_map>
@@ -434,14 +435,37 @@ void FFI_set_state_write(){
 * My goal is to provide a drop-in replacement of default pthread APIs.
 ******************************************************************/
 
+// Is there a way to determine whether a mutex is globally initialized or not?
+bool pthread_is_mutex_global_init(void *ptr){
+
+	ptr = (pthread_mutex_t *) ptr;
+
+	// Check if the input pointer is even of type pthread_mutex_t.
+	// Doesn't matter! I type casted it.
+	if( sizeof(*ptr) == 40 ){
+
+		// This is more of a hack. The __size and __data are machine and OS specific
+		if( (sizeof(ptr->__size) == 40) && (sizeof(ptr->__data) == 40)){
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	return false;
+}
+
 // Assuming that no 2 threads can simultaneously call the hash_map related methods.
 // STL containers like hash map and vectors are NOT thread safe, but this shouldn't
 // be a problem in our case.
-int FFI_pthread_mutex_init(void *ptr){
+int FFI_pthread_mutex_init(void *ptr, void *mutex_attr){
 
 #ifdef DEBUG_PTHREAD_API
 	printf("In FFI_pthread_mutex_init: recieved: %p \n", ptr);
 #endif
+
+	assert(mutex_attr == NULL && "We don't know how to process mutex attribute flags");
+
 
 	llu key = (llu)ptr;
 
@@ -507,9 +531,10 @@ int FFI_pthread_mutex_lock(void *ptr){
 	llu key = (llu)ptr;
 	std::unordered_map<llu, CoyoteLock*>::iterator it = hash_map->find(key);
 
-	// If it is not in the hash map, try looking up in the lazy init list
+	// If it is not in the hash map, initialize it. It can be becoz this mutex ptr is globally initialized
 	if(it == hash_map->end()){
-		check_and_init_mutex(ptr);
+
+		pthread_mutex_init(ptr);
 		it = hash_map->find(key);
 	}
 
@@ -544,10 +569,10 @@ int FFI_pthread_mutex_trylock(void *ptr){
 	llu key = (llu)ptr;
 	std::unordered_map<llu, CoyoteLock*>::iterator it = hash_map->find(key);
 
-	// If it is not in the hash map, try looking up in the lazy init list
+	// If it is not in the hash map, initialize it
 	if(it == hash_map->end()){
 
-		check_and_init_mutex(ptr);
+		pthread_mutex_init(ptr);
 		it = hash_map->find(key);
 	}
 
@@ -561,7 +586,7 @@ int FFI_pthread_mutex_trylock(void *ptr){
 
 	// If the resource is already locked, then return -1;
 	if(obj->is_locked){
-		return -1;
+		return EBUSY; // 16 is the code for EBUSY in <errno.h>.
 	}
 	// Otherwise, return 0 and gain the lock
 	obj->is_locked = true;
@@ -613,7 +638,8 @@ int FFI_pthread_mutex_unlock(void *ptr){
 
 	// If it is not in the hash map, try looking up in the lazy init list
 	if(it == hash_map->end()){
-		check_and_init_mutex(ptr);
+
+		pthread_mutex_init(ptr);
 		it = hash_map->find(key);
 	}
 
@@ -644,7 +670,8 @@ int FFI_pthread_mutex_destroy(void *ptr){
 
 	// If it is not in the hash map, try looking up in the lazy init list
 	if(it == hash_map->end()){
-		check_and_init_mutex(ptr);
+
+		pthread_mutex_init(ptr);
 		it = hash_map->find(key);
 	}
 

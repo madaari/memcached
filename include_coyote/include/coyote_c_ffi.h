@@ -188,9 +188,9 @@
 
 // This method should be called after pthread_mutex_init with mutex pointer as param
 #ifndef DISABLE_COYOTE_FFI
-	int FFI_pthread_mutex_init(void* mutex_ptr);
+	int FFI_pthread_mutex_init(void* mutex_ptr, void* attr);
 #else
-	#define FFI_pthread_mutex_init(x)
+	#define FFI_pthread_mutex_init(x, y)
 #endif
 
 #ifndef DISABLE_COYOTE_FFI
@@ -242,9 +242,9 @@
 
 // This method should be called after pthread_cond_init with conditional variable pointer as param
 #ifndef DISABLE_COYOTE_FFI
-	int FFI_pthread_cond_init(void* cond_var);
+	int FFI_pthread_cond_init(void* cond_var, void* attr);
 #else
-	#define FFI_pthread_cond_init(x)
+	#define FFI_pthread_cond_init(x, y)
 #endif
 
 #ifndef DISABLE_COYOTE_FFI
@@ -279,6 +279,12 @@
 	int FFI_pthread_cond_destroy(void* cond_ptr);
 #else
 	#define FFI_pthread_cond_destroy(x)
+#endif
+
+#ifndef DISABLE_COYOTE_FFI
+	int FFI_pthread_create(void*, void*, void *(*start)(void *), void*);
+#else
+	#define FFI_pthread_create(x, y, z, a)
 #endif
 
 #ifndef DISABLE_COYOTE_FFI

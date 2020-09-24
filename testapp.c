@@ -728,13 +728,13 @@ static struct conn *connect_server(const char *hostname, in_port_t port,
                 sock = -1;
             }
         }
-        c->read = ssl_read;
-        c->write = ssl_write;
+        c->read_fun = ssl_read;
+        c->write_fun = ssl_write;
     } else
 #endif
     {
-        c->read = tcp_read;
-        c->write = tcp_write;
+        c->read_fun = tcp_read;
+        c->write_fun = tcp_write;
     }
     return c;
 }

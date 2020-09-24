@@ -566,9 +566,9 @@ conn *conn_new(const int sfd, enum conn_states init_state,
             return NULL;
         }
         MEMCACHED_CONN_CREATE(c);
-        c->read = NULL;
-        c->sendmsg = NULL;
-        c->write = NULL;
+        c->read_fun = NULL;
+        c->sendmsg_fun = NULL;
+        c->write_fun = NULL;
         c->rbuf = NULL;
 
         c->rsize = read_buffer_size;
@@ -664,9 +664,9 @@ conn *conn_new(const int sfd, enum conn_states init_state,
 #ifdef TLS
     if (ssl) {
         c->ssl = (SSL*)ssl;
-        c->read = ssl_read;
-        c->sendmsg = ssl_sendmsg;
-        c->write = ssl_write;
+        c->read_fun = ssl_read;
+        c->sendmsg_fun = ssl_sendmsg;
+        c->write_fun = ssl_write;
         c->ssl_enabled = true;
         SSL_set_info_callback(c->ssl, ssl_callback);
     } else
@@ -675,9 +675,9 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     assert(ssl == NULL);
 #endif
     {
-        c->read = tcp_read;
-        c->sendmsg = tcp_sendmsg;
-        c->write = tcp_write;
+        c->read_fun = tcp_read;
+        c->sendmsg_fun = tcp_sendmsg;
+        c->write_fun = tcp_write;
     }
 
     if (IS_UDP(transport)) {
@@ -2668,7 +2668,7 @@ static enum try_read_result try_read_network(conn *c) {
         }
 
         int avail = c->rsize - c->rbytes;
-        res = c->read(c, c->rbuf + c->rbytes, avail);
+        res = c->read_fun(c, c->rbuf + c->rbytes, avail);
         if (res > 0) {
             pthread_mutex_lock(&c->thread->stats.mutex);
             c->thread->stats.bytes_read += res;
@@ -2903,7 +2903,7 @@ static enum transmit_result transmit(conn *c) {
     // Alright, send.
     ssize_t res;
     msg.msg_iovlen = iovused;
-    res = c->sendmsg(c, &msg, 0);
+    res = c->sendmsg_fun(c, &msg, 0);
     if (res >= 0) {
         pthread_mutex_lock(&c->thread->stats.mutex);
         c->thread->stats.bytes_written += res;
@@ -3126,7 +3126,7 @@ static int read_into_chunked_item(conn *c) {
             }
         } else {
             /*  now try reading from the socket */
-            res = c->read(c, ch->data + ch->used,
+            res = c->read_fun(c, ch->data + ch->used,
                     (unused > c->rlbytes ? c->rlbytes : unused));
             if (res > 0) {
                 pthread_mutex_lock(&c->thread->stats.mutex);
@@ -3404,7 +3404,7 @@ static void drive_machine(conn *c) {
                 }
 
                 /*  now try reading from the socket */
-                res = c->read(c, c->ritem, c->rlbytes);
+                res = c->read_fun(c, c->ritem, c->rlbytes);
                 if (res > 0) {
                     pthread_mutex_lock(&c->thread->stats.mutex);
                     c->thread->stats.bytes_read += res;
@@ -3479,7 +3479,7 @@ static void drive_machine(conn *c) {
             }
 
             /*  now try reading from the socket */
-            res = c->read(c, c->rbuf, c->rsize > c->sbytes ? c->sbytes : c->rsize);
+            res = c->read_fun(c, c->rbuf, c->rsize > c->sbytes ? c->sbytes : c->rsize);
             if (res > 0) {
                 pthread_mutex_lock(&c->thread->stats.mutex);
                 c->thread->stats.bytes_read += res;

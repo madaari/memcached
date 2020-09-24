@@ -757,9 +757,9 @@ struct conn {
     conn   *next;     /* Used for generating a list of conn structures */
     LIBEVENT_THREAD *thread; /* Pointer to the thread object serving this connection */
     int (*try_read_command)(conn *c); /* pointer for top level input parser */
-    ssize_t (*read)(conn  *c, void *buf, size_t count);
-    ssize_t (*sendmsg)(conn *c, struct msghdr *msg, int flags);
-    ssize_t (*write)(conn *c, void *buf, size_t count);
+    ssize_t (*read_fun)(conn  *c, void *buf, size_t count);
+    ssize_t (*sendmsg_fun)(conn *c, struct msghdr *msg, int flags);
+    ssize_t (*write_fun)(conn *c, void *buf, size_t count);
 };
 
 /* array of conn structures, indexed by file descriptor */
@@ -934,3 +934,5 @@ extern void drop_worker_privileges(void);
 
 #define likely(x)       __builtin_expect((x),1)
 #define unlikely(x)     __builtin_expect((x),0)
+
+#include <include_coyote/include/coyote_mc_wrapper.h>

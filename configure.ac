@@ -378,6 +378,9 @@ AC_CACHE_CHECK([for libevent directory], ac_cv_libevent_dir, [
   fi
 ])
 LIBS="-levent $LIBS"
+LIBS="-L/home/udit/memcached_2020/memcached/include_coyote/include -lmock_libevent -lcoyote_c_ffi -lcoyote $LIBS"
+LIBS="-L/home/udit/memcached_2020/memcached/coyotest -lcoyotest $LIBS"
+
 if test $ac_cv_libevent_dir != "(system)"; then
   if test -d "$ac_cv_libevent_dir/lib" ; then
     LDFLAGS="-L$ac_cv_libevent_dir/lib $LDFLAGS"

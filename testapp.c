@@ -39,8 +39,8 @@ struct conn {
     SSL_CTX   *ssl_ctx;
     SSL    *ssl;
 #endif
-    ssize_t (*read)(struct conn  *c, void *buf, size_t count);
-    ssize_t (*write)(struct conn *c, const void *buf, size_t count);
+    ssize_t (*read_fun)(struct conn  *c, void *buf, size_t count);
+    ssize_t (*write_fun)(struct conn *c, const void *buf, size_t count);
 };
 
 hash_func hash;
@@ -790,7 +790,7 @@ static void send_ascii_command(const char *buf) {
     size_t len = strlen(buf);
 
     do {
-        ssize_t nw = con->write((void*)con, ptr + offset, len - offset);
+        ssize_t nw = con->write_fun((void*)con, ptr + offset, len - offset);
         if (nw == -1) {
             if (errno != EINTR) {
                 fprintf(stderr, "Failed to write: %s\n", strerror(errno));
@@ -812,7 +812,7 @@ static void read_ascii_response(char *buffer, size_t size) {
     off_t offset = 0;
     bool need_more = true;
     do {
-        ssize_t nr = con->read(con, buffer + offset, 1);
+        ssize_t nr = con->read_fun(con, buffer + offset, 1);
         if (nr == -1) {
             if (errno != EINTR) {
                 fprintf(stderr, "Failed to read: %s\n", strerror(errno));
@@ -863,7 +863,7 @@ static enum test_return test_issue_102(void) {
 
     send_ascii_command(buffer);
     /* verify that the server closed the connection */
-    assert(con->read(con, buffer, sizeof(buffer)) == 0);
+    assert(con->read_fun(con, buffer, sizeof(buffer)) == 0);
 
     close_conn();
     con = connect_server("127.0.0.1", port, false, enable_ssl);
@@ -896,7 +896,7 @@ static enum test_return test_issue_102(void) {
     buffer[sizeof(buffer) - 1] = '\0';
     send_ascii_command(buffer);
     /* verify that the server closed the connection */
-    assert(con->read(con, buffer, sizeof(buffer)) == 0);
+    assert(con->read_fun(con, buffer, sizeof(buffer)) == 0);
 
     close_conn();
     con = connect_server("127.0.0.1", port, false, enable_ssl);
@@ -931,7 +931,7 @@ static enum test_return shutdown_memcached_server(void) {
 
     send_ascii_command("shutdown\r\n");
     /* verify that the server closed the connection */
-    assert(con->read(con, buffer, sizeof(buffer)) == 0);
+    assert(con->read_fun(con, buffer, sizeof(buffer)) == 0);
 
     close_conn();
 
@@ -969,7 +969,7 @@ static void safe_send(const void* buf, size_t len, bool hickup)
                 num_bytes = (rand() % 1023) + 1;
             }
         }
-        ssize_t nw = con->write(con, ptr + offset, num_bytes);
+        ssize_t nw = con->write_fun(con, ptr + offset, num_bytes);
         if (nw == -1) {
             if (errno != EINTR) {
                 fprintf(stderr, "Failed to write: %s\n", strerror(errno));
@@ -990,7 +990,7 @@ static bool safe_recv(void *buf, size_t len) {
     }
     off_t offset = 0;
     do {
-        ssize_t nr = con->read(con, ((char*)buf) + offset, len - offset);
+        ssize_t nr = con->read_fun(con, ((char*)buf) + offset, len - offset);
         if (nr == -1) {
             if (errno != EINTR) {
                 fprintf(stderr, "Failed to read: %s\n", strerror(errno));
@@ -1338,7 +1338,7 @@ static enum test_return test_binary_quit_impl(uint8_t cmd) {
     }
 
     /* Socket should be closed now, read should return 0 */
-    assert(con->read(con, buffer.bytes, sizeof(buffer.bytes)) == 0);
+    assert(con->read_fun(con, buffer.bytes, sizeof(buffer.bytes)) == 0);
     close_conn();
     con = connect_server("127.0.0.1", port, false, enable_ssl);
     assert(con);
@@ -2167,7 +2167,7 @@ static enum test_return test_issue_101(void) {
     for (ii = 0; ii < max; ++ii) {
         bool more = true;
         do {
-            ssize_t err = conns[ii]->write(conns[ii], command, cmdlen);
+            ssize_t err = conns[ii]->write_fun(conns[ii], command, cmdlen);
             if (err == -1) {
                 switch (errno) {
                 case EINTR:

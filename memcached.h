@@ -20,6 +20,8 @@
 #include <assert.h>
 #include <grp.h>
 #include <signal.h>
+#include <include_coyote/include/coyote_mc_wrapper.h>
+
 /* need this to get IOV_MAX on some platforms. */
 #ifndef __need_IOV_MAX
 #define __need_IOV_MAX
@@ -935,4 +937,4 @@ extern void drop_worker_privileges(void);
 #define likely(x)       __builtin_expect((x),1)
 #define unlikely(x)     __builtin_expect((x),0)
 
-#include <include_coyote/include/coyote_mc_wrapper.h>
+#include <include_coyote/include/coyote_mc_redefs.h>

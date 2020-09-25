@@ -9,6 +9,7 @@
 // Required by some old compilers!
 #include <assert.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 // FFI for Coyote create_scheduler(void) API call
 #ifndef DISABLE_COYOTE_FFI

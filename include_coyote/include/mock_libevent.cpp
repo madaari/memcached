@@ -1,9 +1,23 @@
+// Compile: g++ -std=c++11 -shared -fPIC -I./ -g -o libmock_libevent.so mock_libevent.cpp -lcoyote_c_ffi -lcoyote -L./
 // Mock of LibEvent APIs using coyote
 #ifndef MOCKLIBEVENT
 #define MOCKLIBEVENT
 
-#include <include_coyote/include/coyote_c_ffi.h>
+extern "C"{
+	void FFI_schedule_next();
+	void FFI_create_scheduler();
+	int FFI_pthread_mutex_init(void* mutex_ptr, void* attr);
+	int FFI_pthread_mutex_lock(void *ptr);
+	int FFI_pthread_mutex_unlock(void *ptr);
+	int FFI_pthread_cond_init(void* ptr, void* attr);
+	int FFI_pthread_cond_wait(void* cond, void* mutex);
+	int FFI_pthread_cond_signal(void* cond);
+}
+
 #include <event.h>
+#include <map>
+#include <unistd.h>
+#include <assert.h>
 
 static int count_event_set = 0;
 static void* dispatcher_event = NULL;
@@ -11,21 +25,20 @@ static void* dispatcher_event_base = NULL;
 
 static std::map<int, void*>* map_fd_to_event  = NULL;
 static std::map<void*, void*>* map_event_to_mocked_event = NULL;
-static std::map<void*, void*>* map_eventbase_to_event = NULL; 
+static std::map<void*, void*>* map_eventbase_to_event = NULL;
 static std::map<void*, void*>* map_event_to_lock = NULL;
 
-static void (*dispatcher_event_handler)(int, int, void*) = NULL;
-static void (*worker_event_handler)(int, int, void*) = NULL;
+static void (*clock_handler)(int, short int, void*) = NULL;
 
 struct mocked_event{
 
 	void* orig_event;
 	int sfd;
 	int which;
-	void(callback_method*)(int, short, void *);
+	void (*callback_method)(int, short, void *);
 	void* args;
 
-	mocked_event(void *ev, void(event_handler*)(int, short, void *), int sfd_o, int which_o, void *arg_o){
+	mocked_event(void *ev, void (*event_handler)(int, short, void *), int sfd_o, int which_o, void *arg_o){
 
 		orig_event = ev;
 		callback_method  = event_handler;
@@ -42,29 +55,20 @@ struct worker_locks{
 	bool is_lock;
 
 	worker_locks(){
-		FFI_pthread_mutex_init(&lock);
-		FFI_pthread_cond_init(&cond);
+		FFI_pthread_mutex_init(&lock, NULL);
+		FFI_pthread_cond_init(&cond, NULL);
 		is_lock = true;
 	}
 };
 
-int FFI_event_set(void* event, int sfd, int flags, void(event_handler*)(int, short, void *), void *arg){
 
-	// If this is the dispatcher event
-	if(count_event_set == 0){
-		dispatcher_event = event;
-		count_event_set ++;
+extern "C"{
 
-		assert(dispatcher_event_handler == NULL);
-		dispatcher_event_handler = event_handler;
-	}
+void FFI_register_clock_handler(void (*clk_handle)(int, short int, void*)){
+	clock_handler = clk_handle;
+}
 
-	if(dispatcher_event_handler != event_handler && worker_event_handler == NULL){
-		worker_event_handler = event_handler;
-	}
-
-	// The input event_handler should be any one of these
-	assert((event_handler == worker_event_handler) || (event_handler == dispatcher_event_handler) && "Not possible!");
+void FFI_event_set(event* ev, int sfd, int flags, void (*event_handler)(int, short, void *), void *arg){
 
 	if (map_fd_to_event == NULL){
 		map_fd_to_event  = new std::map<int, void *>();
@@ -74,87 +78,103 @@ int FFI_event_set(void* event, int sfd, int flags, void(event_handler*)(int, sho
 		map_event_to_mocked_event = new std::map<void*, void*>();
 	}
 
-	bool rv = (map_fd_to_event->insert({sfd, event})).second;
+	bool rv = (map_fd_to_event->insert({sfd, ev})).second;
 	assert(rv && "Insertion to event map failed");
 
 	// I don't knwo what to put in c->which
-	mocked_event* ev = new mocked_event(event, event_handler, sfd, -1, arg);
+	mocked_event* m_ev = new mocked_event(ev, event_handler, sfd, -1, arg);
 
-	rv = (map_event_to_mocked_event->insert({event, ev})).second;
+	rv = (map_event_to_mocked_event->insert({ev, m_ev})).second;
 	assert(rv && "Insertion to mock event map failed");
 
+	printf("Inserted an event corresponding to sfd: %d \n", sfd);
 	// Now call the actual libevent routine
-	return event_set(event, sfd, flags, event_handler, arg);
+
+	// event_set(ev, sfd, flags, event_handler, arg);
+	return;
 }
 
-int FFI_event_base_set(void* base, void* event){
+int FFI_event_add(struct event *ev, struct timeval *tv){
 
-	if(map_event_to_mocked_event->find(event) != map_event_to_mocked_event->end()){
+	return 0;
+}
+
+int FFI_event_base_set(struct event_base* base, struct event* ev){
+
+	if(map_event_to_mocked_event->find(ev) != map_event_to_mocked_event->end()){
 
 		// This is dispatcher_thread
 		if(map_eventbase_to_event == NULL){
 			map_eventbase_to_event = new std::map<void*, void*>();
 		}
 
-		if(event == dispatcher_event){
-			dispatcher_event_base = base;
-		}
-
 		if(map_event_to_lock == NULL){
 			map_event_to_lock = new std::map<void*, void*>();
 		}
 
-		if(map_event_to_lock->find(event) == map_event_to_lock->end()){
+		if(map_event_to_lock->find(ev) == map_event_to_lock->end()){
 
 			worker_locks *wl = new worker_locks();
-			map_event_to_lock->insert({event, wl});
+			map_event_to_lock->insert({ev, wl});
 		}
 
-		bool rv = (map_eventbase_to_event->insert({base, event}));
+		std::map<void*, void*>::iterator it_clock = map_eventbase_to_event->find(base);
+
+		// If this is already in the map. One event base can have multiple events!
+		if(it_clock != map_eventbase_to_event->end()){
+
+			//mocked_event* clk = (mocked_event *)((map_event_to_mocked_event->find( (it_clock)->second ))->second);
+			//clock_handler = clk->callback_method;
+
+			map_eventbase_to_event->erase(it_clock);
+		}
+
+		bool rv = (map_eventbase_to_event->insert({base, ev})).second;
 		assert(rv && " Unable to insert into map_eventbase_to_event");
-
-		return event_base_set(base, set);
-	} else {
-
-		// This is clock handler!
-		return event_base_set(base, set);
 	}
+
+	//return event_base_set(base, ev);
+	return 0;
 }
 
-int FFI_event_del(void* ev){
+int FFI_event_del(event* ev){
 
-	std::map<void*, void*>::iterator it = map_event_to_mocked_event->find(event);
+	std::map<void*, void*>::iterator it = map_event_to_mocked_event->find(ev);
 	assert(it != map_event_to_mocked_event->end() && "This event is not mocked!");
 
-	mocked_event* m_ev = (it.second);
+	mocked_event* m_ev = (mocked_event*)(it->second);
 
-	std::map<int, void*>::iterator it = map_fd_to_event->find(m_ev->sfd);
-	assert(it != map_fd_to_event->end() && "Interesting! file descriptor not found");
+	printf("Deleting an event corresponding to: %d \n", m_ev->sfd);
 
-	map_fd_to_event->remove(it);
-	map_event_to_mocked_event->remove(it);
+	std::map<int, void*>::iterator it2 = map_fd_to_event->find(m_ev->sfd);
+	assert(it2 != map_fd_to_event->end() && "Interesting! file descriptor not found");
+
+	map_fd_to_event->erase(it2);
+	map_event_to_mocked_event->erase(it);
 	delete m_ev;
 
-	return event_del(ev);
+	//return event_del(ev);
+	return 0;
 }
 
 int FFI_event_base_loop(void* ev_base, int flags){
 
-	assert(dispatcher_event_base != NULL && "Dispatcher event base can not be null");
+	FFI_schedule_next();
 
-	// Dispatcher thread
-	if(ev_base == dispatcher_event_base){
+	// Dispatcher thread. Flags = 1 means EVLOOP_ONCE!
+	if(flags == 1){
 
 		std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 		assert(it != map_eventbase_to_event->end() && "Couldn't find in event_base map");
 
-		std::map<void*, void*>::iterator it1 = map_event_to_mocked_event->find( it.second );
+		std::map<void*, void*>::iterator it1 = map_event_to_mocked_event->find( it->second );
 		assert(it1 != map_event_to_mocked_event->end());
 
-		mocked_event* m_ev = (mocked_event*)it1.second;
+		mocked_event* m_ev = (mocked_event*)(it1->second);
 
-		dispatcher_event_handler(m_ev->sfd, m_ev->which, m_ev->arg);
-		clock_event_handler(0, 0, 0);
+		m_ev->callback_method(m_ev->sfd, m_ev->which, m_ev->args);
+		// TODO: Fix this
+		//clock_handler(0, 0, 0);
 
 		return 0;
 
@@ -163,10 +183,10 @@ int FFI_event_base_loop(void* ev_base, int flags){
 		std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 		assert(it != map_eventbase_to_event->end());
 
-		std::map<void*, void*>::iterator it2 = map_event_to_lock->find(it.second);
+		std::map<void*, void*>::iterator it2 = map_event_to_lock->find(it->second);
 		assert(it2 != map_event_to_lock->end());
 
-		worker_locks *wl = it2.second;
+		worker_locks *wl = (worker_locks*)(it2->second);
 
 		while(wl->is_lock){
 
@@ -176,12 +196,15 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 			if(!(wl->is_lock)) break;
 
-			std::map<void*, void*>::iterator i3 = map_event_to_mocked_event->find(it.second);
-			assert(it3 != map_event_to_mocked_event->end());
+			std::map<void*, void*>::iterator i3 = map_event_to_mocked_event->find(it->second);
 
-			mocked_event* m_ev = i3.second;
+			// This event has terminated!
+			if(i3 != map_event_to_mocked_event->end()){
 
-			worker_event_handler(m_ev->sfd, m_ev->which, m_ev->args);
+				mocked_event* m_ev = (mocked_event*)(i3->second);
+
+				m_ev->callback_method(m_ev->sfd, m_ev->which, m_ev->args);
+			}
 		}
 
 		return 0;
@@ -193,10 +216,10 @@ int FFI_event_base_loopexit(void* ev_base, void* args){
 		std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 		assert(it != map_eventbase_to_event->end());
 
-		std::map<void*, void*>::iterator it2 = map_event_to_lock->find(it.second);
+		std::map<void*, void*>::iterator it2 = map_event_to_lock->find(it->second);
 		assert(it2 != map_event_to_lock->end());
 
-		worker_locks *wl = it2.second;
+		worker_locks *wl = (worker_locks*)(it2->second);
 
 		wl->is_lock = false;
 		FFI_pthread_cond_signal(&(wl->cond));
@@ -204,9 +227,14 @@ int FFI_event_base_loopexit(void* ev_base, void* args){
 		return 0;
 }
 
-ssize_t FFI_event_write(int fd, void* buff, size_t count){
+ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 
 	std::map<int, void*>::iterator it = map_fd_to_event->find(fd);
+
+	if(sfd_pipe != -1){
+
+		it = map_fd_to_event->find(sfd_pipe);
+	}
 
 	// If this is not an event fd
 	if(it == map_fd_to_event->end()){
@@ -215,10 +243,10 @@ ssize_t FFI_event_write(int fd, void* buff, size_t count){
 
 	ssize_t retval = write(fd, buff, count);
 
-	std::map<void *, void *>::iterator it2 = map_event_to_lock->find(it.second);
+	std::map<void *, void *>::iterator it2 = map_event_to_lock->find(it->second);
 	assert(it2 != map_event_to_lock->end());
 
-	worker_locks* wl = it2.second;
+	worker_locks* wl = (worker_locks*)(it2->second);
 
 	// Signal the worker!!!!!
 	FFI_pthread_cond_signal(&(wl->cond));
@@ -226,5 +254,6 @@ ssize_t FFI_event_write(int fd, void* buff, size_t count){
 
 	return retval;
 }
+} /* End of Extern 'C'*/
 
 #endif /* MOCKLIBEVENT */

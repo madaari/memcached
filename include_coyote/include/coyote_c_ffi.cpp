@@ -4,7 +4,7 @@
 *  for understanding the working of each function.
 *  Before compiling make sure that you have LD_LIBRARY_PATH environment variable set and pointing to the
 *  location at which coyote.so file is located.
-*  Compile it as DLL using: g++ -std=c++11 -shared -fPIC -I../../../include/ -o libcoyote_c_ffi.so coyote_c_ffi.cpp -lcoyote -L../../../build/
+*  Compile it as DLL using: g++ -std=c++11 -shared -fPIC -I./ -g -o libcoyote_c_ffi.so coyote_c_ffi.cpp -lcoyote -L./
 *  For static library use: g++ -std=c++11 -c -I../../../include/ -o libcoyote_c_ffi.o coyote_c_ffi.cpp -lcoyote -L../../../build/ ; ar rvs libcoyote_c_ffi.a libcoyote_c_ffi.o
 *  @author: Udit Kumar Agarwal <t-uagarwal@microsoft.com>
 */
@@ -131,7 +131,7 @@ std::vector<void *>* lazy_cond_init_list = NULL;
 
 /************************************* For checking liveliness property *******************************/
 
-// Memcached can be in the following 3 states 
+// Memcached can be in the following 3 states
 enum program_state{STATE_READ, STATE_WRITE, STATE_INIT};
 enum program_state curr_state = STATE_INIT;
 
@@ -233,6 +233,11 @@ void FFI_delete_scheduler(){
 void FFI_attach_scheduler(){
 
 	assert(scheduler != NULL && "Wrong sequence of API calls. Create Coyote Scheduler first.");
+
+	// Lazy initialization of hash map
+	if(hash_map == NULL){
+		hash_map = new std::unordered_map<llu, CoyoteLock*>();
+	}
 
 	ErrorCode e = scheduler->attach();
 	assert(e == coyote::ErrorCode::Success && "FFI_attach_scheduler: attach failed");
@@ -435,26 +440,6 @@ void FFI_set_state_write(){
 * My goal is to provide a drop-in replacement of default pthread APIs.
 ******************************************************************/
 
-// Is there a way to determine whether a mutex is globally initialized or not?
-bool pthread_is_mutex_global_init(void *ptr){
-
-	ptr = (pthread_mutex_t *) ptr;
-
-	// Check if the input pointer is even of type pthread_mutex_t.
-	// Doesn't matter! I type casted it.
-	if( sizeof(*ptr) == 40 ){
-
-		// This is more of a hack. The __size and __data are machine and OS specific
-		if( (sizeof(ptr->__size) == 40) && (sizeof(ptr->__data) == 40)){
-			return true;
-		} else {
-			return false;
-		}
-	}
-
-	return false;
-}
-
 // Assuming that no 2 threads can simultaneously call the hash_map related methods.
 // STL containers like hash map and vectors are NOT thread safe, but this shouldn't
 // be a problem in our case.
@@ -466,13 +451,7 @@ int FFI_pthread_mutex_init(void *ptr, void *mutex_attr){
 
 	assert(mutex_attr == NULL && "We don't know how to process mutex attribute flags");
 
-
 	llu key = (llu)ptr;
-
-	// Lazy initialization of hash map
-	if(hash_map == NULL){
-		hash_map = new std::unordered_map<llu, CoyoteLock*>();
-	}
 
 	assert(hash_map->find(key) == hash_map->end() && "FFI_pthread_mutex_init: Key is already in the map\n");
 
@@ -520,7 +499,7 @@ void check_and_init_mutex(void* ptr){
 
 	// If the item is in the list
 	if(it != lazy_mutex_init_list->end()){
-		FFI_pthread_mutex_init(ptr);
+		FFI_pthread_mutex_init(ptr, NULL);
 	}
 }
 
@@ -534,7 +513,7 @@ int FFI_pthread_mutex_lock(void *ptr){
 	// If it is not in the hash map, initialize it. It can be becoz this mutex ptr is globally initialized
 	if(it == hash_map->end()){
 
-		pthread_mutex_init(ptr);
+		FFI_pthread_mutex_init(ptr, NULL);
 		it = hash_map->find(key);
 	}
 
@@ -572,7 +551,7 @@ int FFI_pthread_mutex_trylock(void *ptr){
 	// If it is not in the hash map, initialize it
 	if(it == hash_map->end()){
 
-		pthread_mutex_init(ptr);
+		FFI_pthread_mutex_init(ptr, NULL);
 		it = hash_map->find(key);
 	}
 
@@ -639,7 +618,7 @@ int FFI_pthread_mutex_unlock(void *ptr){
 	// If it is not in the hash map, try looking up in the lazy init list
 	if(it == hash_map->end()){
 
-		pthread_mutex_init(ptr);
+		FFI_pthread_mutex_init(ptr, NULL);
 		it = hash_map->find(key);
 	}
 
@@ -671,7 +650,7 @@ int FFI_pthread_mutex_destroy(void *ptr){
 	// If it is not in the hash map, try looking up in the lazy init list
 	if(it == hash_map->end()){
 
-		pthread_mutex_init(ptr);
+		FFI_pthread_mutex_init(ptr, NULL);
 		it = hash_map->find(key);
 	}
 
@@ -690,7 +669,7 @@ int FFI_pthread_mutex_destroy(void *ptr){
 	return 0;
 }
 
-int FFI_pthread_cond_init(void* ptr){
+int FFI_pthread_cond_init(void* ptr, void* attr){
 
 	llu key = (llu)ptr;
 
@@ -741,7 +720,7 @@ void check_and_init_cond(void *ptr){
 
 	// If the item is in the list, initialize it!
 	if(it != lazy_cond_init_list->end()){
-		FFI_pthread_cond_init(ptr);
+		FFI_pthread_cond_init(ptr, NULL);
 	}
 }
 
@@ -763,7 +742,7 @@ int FFI_pthread_cond_wait(void* cond_var_ptr, void* mtx){
 	// If conditional variable is not in the map; check it in the lazy initialization list
 	if(it_cond == hash_map->end()){
 
-		check_and_init_cond(cond_var_ptr);
+		FFI_pthread_cond_init(cond_var_ptr, NULL);
 		it_cond = hash_map->find(cond_var_key);
 	}
 
@@ -817,7 +796,7 @@ int FFI_pthread_cond_signal(void* ptr){
 	// If conditional variable is not in the map; check it in the lazy initialization list
 	if(it_cond == hash_map->end()){
 
-		check_and_init_cond(ptr);
+		FFI_pthread_cond_init(ptr, NULL);
 		it_cond = hash_map->find(cond_key);
 	}
 	assert(it_cond != hash_map->end() && "FFI_pthread_cond_signal: conditional variable not in map\n");
@@ -861,7 +840,7 @@ int FFI_pthread_cond_broadcast(void* ptr){
 	// If conditional variable is not in the map; check it in the lazy initialization list
 	if(it_cond == hash_map->end()){
 
-		check_and_init_cond(ptr);
+		FFI_pthread_cond_init(ptr, NULL);
 		it_cond = hash_map->find(cond_key);
 	}
 	assert(it_cond != hash_map->end() && "FFI_pthread_cond_broadcast: conditional variable not in map\n");
@@ -908,7 +887,7 @@ int FFI_pthread_cond_destroy(void* ptr){
 	// If conditional variable is not in the map; check it in the lazy initialization list
 	if(it_cond == hash_map->end()){
 
-		check_and_init_cond(ptr);
+		FFI_pthread_cond_init(ptr, NULL);
 		it_cond = hash_map->find(cond_key);
 	}
 

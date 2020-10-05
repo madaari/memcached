@@ -139,7 +139,7 @@ enum program_state curr_state = STATE_INIT;
 llu num_cxt_switch = 0;
 
 // Maximum number of context switches that can happen *without* changing the program state
-#define MAX_NUM_CXT_SWITCH 20000
+#define MAX_NUM_CXT_SWITCH 2000000
 
 /******************************************** CoyoteLock End ******************************************/
 
@@ -453,8 +453,14 @@ int FFI_pthread_mutex_init(void *ptr, void *mutex_attr){
 
 	llu key = (llu)ptr;
 
-	assert(hash_map->find(key) == hash_map->end() && "FFI_pthread_mutex_init: Key is already in the map\n");
+	//assert(hash_map->find(key) == hash_map->end() && "FFI_pthread_mutex_init: Key is already in the map\n");
 
+	// If it is already in the map, return. Don't use the above assertion as it can fail even if
+	// the mutex is new. That can happen due to reuse of heap allocated mutex variable.
+	if(hash_map->find(key) != hash_map->end()){
+
+		return 0;
+	}
 	// Make sure that this key is not in the list of `Globally initialized' mutexes. Otherwise, it can be a potential
 	// double initialization bug!
 
@@ -525,7 +531,7 @@ int FFI_pthread_mutex_lock(void *ptr){
 	printf("In FFI_pthread_mutex_lock: Locking on: %p as coyote resource id: %d \n", ptr, obj->coyote_resource_id);
 #endif
 
-	assert( ( !(obj->is_locked) || FFI_get_operation_id() != obj->user_op_id ) && 
+	assert( ( !(obj->is_locked) || FFI_get_operation_id() != obj->user_op_id ) &&
 		"This thread is already holding this lock, why is it trying to lock it again?");
 
 	// If the resource is already locked, then spinlock!

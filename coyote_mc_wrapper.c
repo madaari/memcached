@@ -56,6 +56,40 @@ int FFI_pthread_create(void *tid, void *attr, void *(*start_routine) (void *), v
 	return pthread_create(tid, attr, coyote_new_thread_wrapper, (void*)p);
 }
 
+static bool stats_state_read = true;
+static bool stats_state_write = true;
+
+void FFI_check_stats_data_race(bool isWrite){
+
+	static int num_readers = 0;
+
+	if(isWrite){
+
+		assert(stats_state_write == true); // Make sure no one is reading this
+		stats_state_write = false;
+		stats_state_read = false;
+
+		FFI_schedule_next();
+
+		stats_state_write = true;
+		stats_state_read  = true;
+
+	} else{
+
+		assert(stats_state_read == true);
+		stats_state_write = false;
+		num_readers++;
+
+		FFI_schedule_next();
+
+		num_readers--;
+		// If all the readers have finished reading
+		if(num_readers == 0){
+			stats_state_write = true;
+		}
+	}
+}
+
 int FFI_pthread_join(pthread_t tid, void* arg){
 
 	FFI_join_operation((long unsigned) tid); // This is a machine & OS specific hack
@@ -65,6 +99,8 @@ int FFI_pthread_join(pthread_t tid, void* arg){
 int FFI_accept(int sfd, void* addr, void* addrlen){
 
 	int retval = CT_new_socket();
+
+	if(retval < 0) return retval;
 
 	assert(retval >= 200 && "Please use fds > 200 as others are reserved");
 	return retval;
@@ -77,6 +113,8 @@ int FFI_getpeername(int sfd, void* addr, void* addrlen){
 	sockaddr->sin6_family = AF_INET;
     sockaddr->sin6_port = 8080;
     inet_pton(AF_INET, "192.0.2.33", &(sockaddr->sin6_addr));
+
+    FFI_schedule_next();
 
     return 0;
 }
@@ -102,9 +140,21 @@ int FFI_pipe(int pipes[2]){
 	return retval;
 }
 
+// No need to wait on a socket
+int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout){
+
+	FFI_schedule_next();
+
+	fds->revents = POLLOUT;
+
+	return 1;
+}
+
 ssize_t FFI_write(int sfd, const void* buff, size_t count){
 
+	FFI_clock_handler();
 	ssize_t retval = -1;
+	FFI_schedule_next();
 
 	// If you are tying to write to a pipe
 	if(global_pipes[sfd] != -1){
@@ -138,6 +188,9 @@ ssize_t FFI_write(int sfd, const void* buff, size_t count){
 
 ssize_t FFI_sendmsg(int sfd, struct msghdr *msg, int flags){
 
+	FFI_schedule_next();
+	FFI_clock_handler();
+
     return CT_socket_recvmsg(sfd, msg, flags);
 }
 
@@ -146,6 +199,9 @@ int FFI_fcntl(int fd, int cmd, ...){
 }
 
 ssize_t FFI_read(int fd, void* buff, int count){
+
+	FFI_schedule_next();
+	FFI_clock_handler();
 
 	if(!CT_is_socket(fd)){
 
@@ -161,6 +217,7 @@ ssize_t FFI_recvfrom(int socket, void* buffer, size_t length,
        int flags, struct sockaddr* address,
        socklen_t* addr_len){
 
+	FFI_schedule_next();
 	return CT_socket_sendto(socket, buffer, length, flags, address, addr_len);
 }
 

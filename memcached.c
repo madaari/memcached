@@ -251,7 +251,7 @@ static void settings_init(void) {
     settings.auth_file = NULL;        /* by default, not using ASCII authentication tokens */
     settings.factor = 1.25;
     settings.chunk_size = 48;         /* space for a modest key and value */
-    settings.num_threads = 4;         /* N workers */
+    settings.num_threads = 1;         /* N workers */
     settings.num_threads_per_udp = 0;
     settings.prefix_delimiter = ':';
     settings.detail_enabled = 0;
@@ -588,6 +588,9 @@ conn *conn_new(const int sfd, enum conn_states init_state,
         }
 
         STATS_LOCK();
+        #ifdef COYOTE_2019_BUGS
+            FFI_check_stats_data_race(1);
+        #endif
         stats_state.conn_structs++;
         STATS_UNLOCK();
 
@@ -714,6 +717,9 @@ conn *conn_new(const int sfd, enum conn_states init_state,
     }
 
     STATS_LOCK();
+    #ifdef COYOTE_2019_BUGS
+    FFI_check_stats_data_race(1);
+    #endif
     stats_state.curr_conns++;
     stats.total_conns++;
     STATS_UNLOCK();
@@ -905,6 +911,9 @@ static void conn_close(conn *c) {
     pthread_mutex_unlock(&conn_lock);
 
     STATS_LOCK();
+    #ifdef COYOTE_2019_BUGS
+    FFI_check_stats_data_race(1);
+    #endif
     stats_state.curr_conns--;
     STATS_UNLOCK();
 
@@ -3218,6 +3227,7 @@ static void drive_machine(conn *c) {
                 }
             }
 
+#ifndef COYOTE_2019_BUGS
             bool reject;
             if (settings.maxconns_fast) {
                 STATS_LOCK();
@@ -3234,6 +3244,20 @@ static void drive_machine(conn *c) {
                 str = "ERROR Too many open connections\r\n";
                 res = write(sfd, str, strlen(str));
                 close(sfd);
+
+#else
+            FFI_check_stats_data_race(0);
+            if(settings.maxconns_fast &&
+              stats_state.curr_conns + stats_state.reserved_fds >= settings.maxconns - 1){
+
+                STATS_LOCK();
+                stats.rejected_conns++;
+                STATS_UNLOCK();
+
+                str = "ERROR Too many open connections\r\n";
+                res = write(sfd, str, strlen(str));
+                close(sfd);
+#endif
             } else {
                 void *ssl_v = NULL;
 #ifdef TLS
@@ -4023,6 +4047,9 @@ static void clock_handler(const evutil_socket_t fd, const short which, void *arg
 
     // While we're here, check for hash table expansion.
     // This function should be quick to avoid delaying the timer.
+    #ifdef COYOTE_2019_BUGS
+    FFI_check_stats_data_race(0);
+    #endif
     assoc_start_expand(stats_state.curr_items);
     // also, if HUP'ed we need to do some maintenance.
     // for now that's just the authfile reload.

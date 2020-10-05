@@ -50,6 +50,7 @@
 #define recvfrom(a, b, c, d, e, f) FFI_recvfrom(a, b, c, d, e, f)
 #define fcntl(x, ...) FFI_fcntl(x, __VA_ARGS__)
 #define pipe(x) FFI_pipe(x)
+#define poll(x, y, z) FFI_poll(x, y, z)
 
 #ifndef IOV_MAX
 # define IOV_MAX 1024
@@ -65,6 +66,10 @@
 
 #define main(x, y) run_coyote_iteration(x, y)
 
-#define usleep(x) {usleep(x); FFI_schedule_next();}
+#define usleep(x) {usleep(0); FFI_schedule_next();}
+
+#define setbuf(x, y) { setbuf(x, y); FFI_register_clock_handler(clock_handler); }
+
+// #define COYOTE_2019_BUGS // For introducing data race bugs
 
 #endif /* COYOTE_MC_REDEF */

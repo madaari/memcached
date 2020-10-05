@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <poll.h>
 
 // Override pthread_create and join to add coyote specific instrumentation
 void *coyote_new_thread_wrapper(void*);
@@ -37,13 +38,18 @@ int FFI_fcntl(int fd, int cmd, ...);
 ssize_t FFI_read(int fd, void* buff, int count);
 ssize_t FFI_recvfrom(int, void*, size_t, int, struct sockaddr*, socklen_t*);
 int FFI_pipe(int[]);
+int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 void FFI_register_clock_handler(void (*clk_handle)(int, short int, void*));
 
 // Its definition is in the mock_libevent library
 ssize_t FFI_event_write(int, const void*, size_t, int);
+void FFI_clock_handler();
 
 // It is in mocklibevent.cpp
 int run_coyote_iteration(int argc, char **argv);
+
+// Defined in coyote_mc_wrapper.c
+void FFI_check_stats_data_race(bool isWrite);
 
 #endif /* COYOTE_MC_WRAP */
 

@@ -2,7 +2,10 @@
 /*
  * Thread management for memcached.
  */
+#define IN_THREAD_FILE
 #include "memcached.h"
+#undef IN_THREAD_FILE
+
 #ifdef EXTSTORE
 #include "storage.h"
 #endif

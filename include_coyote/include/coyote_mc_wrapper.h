@@ -26,6 +26,7 @@ int FFI_event_del(void* ev);
 int FFI_event_base_loop(void* ev_base, int flags);
 int FFI_event_base_loopexit(void* ev_base, void* args);
 int FFI_event_add(void *ev, void* tv);
+void FFI_event_reset_all(void);
 
 /*********************************************** System calls **********************************************/
 
@@ -40,6 +41,7 @@ ssize_t FFI_recvfrom(int, void*, size_t, int, struct sockaddr*, socklen_t*);
 int FFI_pipe(int[]);
 int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 void FFI_register_clock_handler(void (*clk_handle)(int, short int, void*));
+void FFI_register_main_stop(int *flag);
 
 // Its definition is in the mock_libevent library
 ssize_t FFI_event_write(int, const void*, size_t, int);
@@ -50,6 +52,17 @@ int run_coyote_iteration(int argc, char **argv);
 
 // Defined in coyote_mc_wrapper.c
 void FFI_check_stats_data_race(bool isWrite);
+
+void reset_all_globals(void);
+
+// Functions to reset global variables in all files
+void reset_logger_globals(void);
+void reset_memcached_globals(void);
+void reset_thread_globals(void);
+void reset_assoc_globals(void);
+void reset_crawler_globals(void);
+void reset_items_globals(void);
+void reset_slabs_globals(void);
 
 #endif /* COYOTE_MC_WRAP */
 

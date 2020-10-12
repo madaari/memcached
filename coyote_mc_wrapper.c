@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <signal.h>
 
 // Declarations of test methods. These methods should be implemented by the test case.
 bool CT_is_socket(int);
@@ -19,7 +20,7 @@ ssize_t CT_socket_sendto(int, void*, size_t, int, struct sockaddr*,
        socklen_t*);
 
 // Main function of the test case
-int CT_main( int (*run_iteration)(int, char**), int argc, char** argv );
+int CT_main( int (*run_iteration)(int, char**), void (*reset_gloabs)(void), int argc, char** argv );
 
 // Temporary data structure used for passing parameteres to pthread_create
 typedef struct pthread_create_params{
@@ -96,11 +97,20 @@ int FFI_pthread_join(pthread_t tid, void* arg){
 	return pthread_join(tid, arg);
 }
 
+static int *stop_main = NULL;
+void FFI_register_main_stop(int *flag){
+	stop_main = flag;
+}
+
 int FFI_accept(int sfd, void* addr, void* addrlen){
 
 	int retval = CT_new_socket();
 
-	if(retval < 0) return retval;
+	if(retval < 0){
+
+		*stop_main = 2;
+		return retval;
+	}
 
 	assert(retval >= 200 && "Please use fds > 200 as others are reserved");
 	return retval;
@@ -221,10 +231,23 @@ ssize_t FFI_recvfrom(int socket, void* buffer, size_t length,
 	return CT_socket_sendto(socket, buffer, length, flags, address, addr_len);
 }
 
+void reset_all_globals(){
+
+	reset_logger_globals();
+	reset_memcached_globals();
+	reset_thread_globals();
+	reset_assoc_globals();
+	reset_crawler_globals();
+	reset_items_globals();
+	reset_slabs_globals();
+	// For resetting libevent mock DS
+	FFI_event_reset_all();
+}
+
 // Delegate the functionality to the test main method
 int main(int argc, char **argv){
 
- 	return CT_main( &run_coyote_iteration, argc, argv );
+ 	return CT_main( &run_coyote_iteration, &reset_all_globals, argc, argv );
 }
 
 #endif /* COYOTE_MC_WRAP */

@@ -6,6 +6,8 @@ using namespace std;
 
 vector<conn*>* global_conns;
 
+// To disable printf statements
+#define printf(x, ...)
 
 char* get_key_name(int i, char prefix = ' '){
 
@@ -538,10 +540,10 @@ void set_workload_meta_cmds(conn* obj){
     obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA 1[ ])(s[0-9][ ])(t(([1-8][0-9])|90)[ ])(Ofoo[ ])(.*)\r\n" ));
 
     obj->add_kv_cmd("ma mi N90 J13 v t\r\n");
-    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(13|14|15)\r\n"));
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(13|14|15|44|45|46|74|75|76)\r\n"));
 
     obj->add_kv_cmd("ma mi N90 J13 v t\r\n");
-    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(14|15|16)\r\n"));
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(14|15|16|44|45|46|74|75|76)\r\n"));
 
     obj->add_kv_cmd("ma mi N90 J13 v t D30\r\n");
     obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(44|45|46|74|75|76)\r\n"));
@@ -583,6 +585,7 @@ void del_sockets(){
 
 	delete global_conns;
 	global_conns = NULL;
+	num_conn_registered = 0;
 }
 
 bool CT_is_socket(int fd){
@@ -755,10 +758,11 @@ int CT_new_socket(){
 
 	// Block the dispatcher thread, when we have already created all the sockets
 	if(count_num_sockets == i){
-		while(1){
+		while(num_conn_registered != count_num_sockets){
 			FFI_schedule_next();
 		}
-		//return -1;
+		i = 0;
+		return -1;
 	}
 
 	conn* c = global_conns->at(i);
@@ -788,12 +792,15 @@ int set_options(int argc, char** argv, char** new_argv){
 	return argc + num_new_opt;
 }
 
+// Allow printfs from main function
+#undef printf
+
 // Test main method
-int CT_main( int (*run_iteration)(int, char**), int argc, char** argv ){
+int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), int argc, char** argv ){
 
 	FFI_create_scheduler();
 
-	int num_iter = 10;
+	int num_iter = 1;
 
 	char **new_argv = (char **)malloc(50 * sizeof(char *));
 	for(int i = 0; i < 50; i++){
@@ -815,6 +822,7 @@ int CT_main( int (*run_iteration)(int, char**), int argc, char** argv ){
 
 		FFI_detach_scheduler();
 		FFI_scheduler_assert();
+		reset_all_globals();
 
 		del_sockets();
 	}

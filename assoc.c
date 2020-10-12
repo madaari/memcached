@@ -11,7 +11,10 @@
  * The rest of the file is licensed under the BSD license.  See LICENSE.
  */
 
+#define IN_ASSOC_FILE
 #include "memcached.h"
+#undef IN_ASSOC_FILE
+
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/resource.h>

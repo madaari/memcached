@@ -12,7 +12,10 @@
 #include <atomic.h>
 #endif
 
+#define IN_LOGGER_FILE
 #include "memcached.h"
+#undef IN_LOGGER_FILE
+
 #include "bipbuffer.h"
 
 #ifdef LOGGER_DEBUG

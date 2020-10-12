@@ -361,6 +361,28 @@ ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 
 	return retval;
 }
+
+void FFI_event_reset_all(){
+
+	count_event_set = 0;
+	dispatcher_event = NULL;
+	dispatcher_event_base = NULL;
+
+	delete map_fd_to_event;
+	map_fd_to_event  = NULL;
+
+	delete map_event_to_mocked_event;
+	map_event_to_mocked_event = NULL;
+
+	delete map_eventbase_to_event;
+	map_eventbase_to_event = NULL;
+
+	delete map_event_to_lock;
+	map_event_to_lock = NULL;
+
+	delete queue_eventbase_to_event;
+	queue_eventbase_to_event = NULL;
+}
 } /* End of Extern 'C'*/
 
 #endif /* MOCKLIBEVENT */

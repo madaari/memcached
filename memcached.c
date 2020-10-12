@@ -13,7 +13,10 @@
  *      Anatoly Vorobey <mellon@pobox.com>
  *      Brad Fitzpatrick <brad@danga.com>
  */
+#define IN_MEMCACHED_FILE
 #include "memcached.h"
+#undef IN_MEMCACHED_FILE
+
 #ifdef EXTSTORE
 #include "storage.h"
 #endif
@@ -122,10 +125,12 @@ volatile int slab_rebalance_signal;
  */
 void *ext_storage = NULL;
 #endif
-/** file scope variables **/
-static conn *listen_conn = NULL;
-static int max_fds;
-static struct event_base *main_base;
+
+    /** file scope variables **/
+    static conn *listen_conn = NULL;
+    static int max_fds;
+    static struct event_base *main_base;
+
 
 enum transmit_result {
     TRANSMIT_COMPLETE,   /** All done writing. */

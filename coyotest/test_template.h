@@ -7,6 +7,7 @@
 #include <string>
 #include <map>
 #include <unistd.h>
+#include <csignal>
 
 extern "C"{
 	#include <coyote_c_ffi.h>
@@ -16,6 +17,7 @@ using namespace std;
 
 static int socket_counter = 200;
 map<int, void*>* map_fd_to_conn = NULL;
+int num_conn_registered = 0;
 
 struct conn{
 
@@ -175,17 +177,18 @@ struct conn{
 
 	string get_next_cmd(){
 
-		string retval = kv_cmd->front();
+		string retval;
 
-		vector<string>::iterator it = kv_cmd->begin();
+		if(kv_cmd->size()){
 
-		// Means there is no more command to give. Block
-		if(it == kv_cmd->end()){
-			return string("quit\r\n");
+			vector<string>::iterator it = kv_cmd->begin();
+			retval = *it;
+			kv_cmd->erase(it);
+		}else{
+
+			num_conn_registered++;
+			retval = string("quit\r\n");
 		}
-
-		// TODO: Make sure if the iterator is not end()
-		kv_cmd->erase(it);
 
 		return retval;
 	}
@@ -224,7 +227,23 @@ struct conn{
 		bool rv = (map_fd_to_conn->insert({conn_id, this})).second;
 		assert(rv && "Insertion to map_fd_to_conn failed!");
 	}
+	~conn(){
+
+		delete kv_response;
+		kv_response = 0;
+
+		delete kv_cmd;
+		kv_cmd = 0;
+
+		delete expected_response;
+		expected_response = 0;
+	}
 };
+
+void shutdown_mc(){
+	// Issue a SIGINT signal to the server
+	std::raise(SIGINT);
+}
 
 extern "C"{
 

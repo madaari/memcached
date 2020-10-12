@@ -7,7 +7,10 @@
  * slab size is always 1MB, since that's the maximum item size allowed by the
  * memcached protocol.
  */
+#define IN_SLABS_FILE
 #include "memcached.h"
+#undef IN_SLABS_FILE
+
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/socket.h>

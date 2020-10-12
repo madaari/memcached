@@ -5,7 +5,10 @@
  */
 
 /* -*- Mode: C; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*- */
+#define IN_CRAWLER_FILE
 #include "memcached.h"
+#undef IN_CRAWLER_FILE
+
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/resource.h>

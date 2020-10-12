@@ -69,10 +69,57 @@ struct conn{
 		add_kv_cmd(base);
 	}
 
-	void get_mem_stats_and_assert(const char* type, const char* param, int val){
+	void incr_key(const char* key, const int val){
+
+		string base("incr ");
+		base = base + char_to_string(key);
+		base = base + char_to_string(" ") + to_string(val);
+		base = base + char_to_string("\r\n");
+
+		add_kv_cmd(base);
+	}
+
+	void decr_key(const char* key, const int val){
+
+		string base("decr ");
+		base = base + char_to_string(key);
+		base = base + char_to_string(" ") + to_string(val);
+		base = base + char_to_string("\r\n");
+
+		add_kv_cmd(base);
+	}
+
+	void append_key(const char* key, const char* val, int expr = 0){
+
+		string base("append ");
+		base = base + char_to_string(key);
+		base = base + char_to_string(" 01 ") + to_string(expr);
+		base = base + char_to_string(" ") + to_string(strlen(val));
+		base = base + char_to_string("\r\n") + char_to_string(val);
+		base = base + char_to_string("\r\n");
+
+		add_kv_cmd(base);
+	}
+
+	void prepend_key(const char* key, const char* val, int expr = 0){
+
+		string base("prepend ");
+		base = base + char_to_string(key);
+		base = base + char_to_string(" 01 ") + to_string(expr);
+		base = base + char_to_string(" ") + to_string(strlen(val));
+		base = base + char_to_string("\r\n") + char_to_string(val);
+		base = base + char_to_string("\r\n");
+
+		add_kv_cmd(base);
+	}
+
+	void get_mem_stats_and_assert(const char* type, const char* param, string val){
 
 		string base("stats ");
-		base = base + char_to_string(type);
+
+		if(strcmp(type, "gen") != 0)
+			base = base + char_to_string(type);
+
 		base = base + char_to_string("\r\n");
 
 		add_kv_cmd(base); // Add the command
@@ -88,9 +135,9 @@ struct conn{
 
 			// Don't put \r\n for stats items
 			if(strcmp(type, "items") == 0)
-				resp1 = resp1 + to_string(val);
+				resp1 = resp1 + val;
 			else
-				resp1 = resp1 + to_string(val) + char_to_string("\r\n");
+				resp1 = resp1 + val + char_to_string("\r\n");
 
 			set_expected_kv_resp(resp, resp1);
 		}

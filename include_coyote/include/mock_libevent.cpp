@@ -101,6 +101,9 @@ void FFI_clock_handler(){
 
 void FFI_event_set(event* ev, int sfd, int flags, void (*event_handler)(int, short, void *), void *arg){
 
+	// In case of a clock handler
+	if(sfd == -1)
+		return;
 
 	if (map_fd_to_event == NULL){
 		map_fd_to_event  = new std::map<int, void *>();
@@ -175,7 +178,11 @@ int FFI_event_base_set(struct event_base* base, struct event* ev){
 int FFI_event_del(event* ev){
 
 	std::map<void*, void*>::iterator it = map_event_to_mocked_event->find(ev);
-	assert(it != map_event_to_mocked_event->end() && "This event is not mocked!");
+
+	// This can happen in the case of clock handler
+	if(it == map_event_to_mocked_event->end()){
+		return 0;
+	}
 
 	mocked_event* m_ev = (mocked_event*)(it->second);
 

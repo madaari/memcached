@@ -1,5 +1,6 @@
 // Compile this as: g++ -std=c++11 -shared -fPIC -I./ -g -o libcoyotest.so test_basic_store_get.cpp -g -L/home/udit/memcached_2020/memcached/include_coyote/include -lcoyote_c_ffi -lcoyote
 #include <test_template.h>
+#include <regex>
 
 using namespace std;
 
@@ -39,7 +40,28 @@ char* get_key_name(int i, char prefix = ' '){
 
 extern "C"{
 
-int count_num_sockets = 1;
+int count_num_sockets = 2;
+
+ssize_t parse_meta_response(struct msghdr *msg, string rgx){
+
+	int retval = 0;
+	bool isFound = false;
+	std::regex value(rgx.c_str());
+
+	for(int i = 0; i < msg->msg_iovlen; i++){
+
+		retval += msg->msg_iov[i].iov_len;
+		string st((char*)(msg->msg_iov[i].iov_base));
+
+		if(std::regex_match(st, value)){
+			isFound = true;
+		}
+	}
+
+	assert(isFound && "Value not found in the return string");
+
+	return retval;
+}
 
 // This function will be called when we recieve response for this request
 ssize_t parse_get_response(struct msghdr *msg, string value){
@@ -77,6 +99,18 @@ ssize_t parse_generic_response(struct msghdr *msg, string value){
 	return (msg->msg_iov->iov_len);
 }
 
+ssize_t parse_watch_response(const char* msg, string value){
+
+	string response((char*)(msg));
+
+	if(response.find(value) == string::npos ){
+
+		return -1;
+	}
+
+	return strlen(msg);
+}
+
 ssize_t parse_stats_slabs_response(struct msghdr *msg, string value){
 
 	int retval = 0;
@@ -99,6 +133,48 @@ ssize_t parse_stats_slabs_response(struct msghdr *msg, string value){
 }
 
 ssize_t parse_stats_items_response(struct msghdr *msg, string value){
+
+	int retval = 0;
+	bool isFound = false;
+
+	for(int i = 0; i < msg->msg_iovlen; i++){
+
+		retval += msg->msg_iov[i].iov_len;
+		string st((char*)(msg->msg_iov[i].iov_base));
+
+		// Check whether the metadump contains the required string or not
+		if(st.find(value) != string::npos){
+			isFound = true;
+		}
+	}
+
+	assert(isFound && "Value not found in the return string");
+
+	return retval;
+}
+
+ssize_t parse_stats_settings_response(struct msghdr *msg, string value){
+
+	int retval = 0;
+	bool isFound = false;
+
+	for(int i = 0; i < msg->msg_iovlen; i++){
+
+		retval += msg->msg_iov[i].iov_len;
+		string st((char*)(msg->msg_iov[i].iov_base));
+
+		// Check whether the metadump contains the required string or not
+		if(st.find(value) != string::npos){
+			isFound = true;
+		}
+	}
+
+	assert(isFound && "Value not found in the return string");
+
+	return retval;
+}
+
+ssize_t parse_stats_gen_response(struct msghdr *msg, string value){
 
 	int retval = 0;
 	bool isFound = false;
@@ -216,7 +292,7 @@ void set_workload_lru(conn* obj){
 		obj->set_expected_kv_resp("generic", "STORED\r\n");
 	}
 
-	obj->get_mem_stats_and_assert("slabs", "1:used_chunks", 9);
+	obj->get_mem_stats_and_assert("slabs", "1:used_chunks", to_string(9));
 
 	sleep(1);
 
@@ -233,8 +309,8 @@ void set_workload_lru(conn* obj){
 			obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("\r\n") );
 		}
 
-		obj->get_mem_stats_and_assert("slabs", "1:used_chunks", 6);
-		obj->get_mem_stats_and_assert("items", "items:1:crawler_reclaimed", 3);
+		obj->get_mem_stats_and_assert("slabs", "1:used_chunks", to_string(6));
+		obj->get_mem_stats_and_assert("items", "items:1:crawler_reclaimed", to_string(3));
 
 		string lru_crawler2("lru_crawler metadump all\r\n");
 		obj->add_kv_cmd(lru_crawler2);
@@ -280,9 +356,123 @@ void set_workload_lru(conn* obj){
 		}
 	}
 
-	obj->get_mem_stats_and_assert("slabs", "1:used_chunks", 6);
+	obj->get_mem_stats_and_assert("slabs", "1:used_chunks", to_string(6));
 }
 
+void set_workload_extstore(conn* obj){
+
+	// Generate a latge workload
+	char* long_val = (char*)malloc(sizeof(char) * 1000 * 5);
+	memset(long_val, 'C', sizeof(char) * 1000 * 5); // Store a char per byte
+
+	for(int i = 1; i <= 2; i++){
+
+		char* key = get_key_name(i);
+		obj->set_key(key, long_val, 0); // Store the keys for infinite time
+	}
+
+	// Pehaps we first need to make sure the extstore thread did its job
+
+	for(int i = 1; i <= 2; i++){
+
+		char* key = get_key_name(i);
+
+		if(i < 1)
+			obj->incr_key(key, 1); // increment the keys
+		else
+			obj->decr_key(key, 1); // Decrement the keys
+
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("CLIENT_ERROR cannot increment or decrement non-numeric value\r\n"));
+	}
+
+	// append a string to the values of a various keys
+	for(int i = 1; i <= 2; i++){
+
+		char* key = get_key_name(i);
+
+		if(i <= 1)
+			obj->append_key(key, "hello");
+		else
+			obj->prepend_key(key, "hello");
+
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+	}
+}
+
+void set_workload_slab_rebalance(conn* obj){
+
+	// Make sure that slab_reassign option is set
+	obj->get_mem_stats_and_assert("settings", "slab_reassign", obj->char_to_string("yes"));
+
+	// This hsould consume the entire cache. Slab id is 23
+	char* long_val = (char*)malloc(sizeof(char) * 1024 * 12);
+	memset(long_val, 'x', sizeof(char) * 1024 * 12); // Store a char per byte
+
+	for(int i = 1; i <= 150; i++){
+
+		char* key = get_key_name(i);
+		obj->set_key(key, long_val, 0, true); // For infinite time
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+	}
+
+	// This should take 1/4 of the total cache. Slab id: 19
+	char* small_val = (char*)malloc(sizeof(char) * 1024 * 5);
+	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+
+	for(int i = 1; i <= 50; i++){
+
+		char* key = get_key_name(i);
+		obj->set_key(key, small_val, 0, true); // For infinite time
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+	}
+
+	// TODO: Use RegEx here
+	// These should fail!
+	//obj->get_mem_stats_and_assert("items", "items:19:evicted", obj->char_to_string(""), true);
+	//obj->get_stats_and_eval_regex("items", "*items:19:evicted [1-]");
+	//obj->get_mem_stats_and_assert("items", "items:25:evicted", to_string(0));
+
+	obj->add_kv_cmd("slabs reassign invalid1 invalid2\r\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("CLIENT_ERROR bad command line format\r\n"));
+
+	obj->add_kv_cmd("slabs reassign 23 19\r\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+	// General
+	obj->get_mem_stats_and_assert("gen", "slabs_moved", to_string(1));
+
+	obj->add_kv_cmd("slabs reassign 23 19\r\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+
+	obj->get_mem_stats_and_assert("gen", "slabs_moved", to_string(1));
+}
+
+void set_workload_logger(conn* obj){
+
+	static int prev_conn_id = obj->conn_id;
+
+	// Watcher connectiobn
+	if(prev_conn_id == obj->conn_id){
+
+		obj->add_kv_cmd("watch\n");
+		obj->set_expected_kv_resp(obj->char_to_string("watch"), obj->char_to_string("OK\r\n"));
+
+		obj->set_expected_kv_resp(obj->char_to_string("watch"), obj->char_to_string("102000"));
+
+	}else{
+	// Worker connection
+
+		obj->get_and_assert_key("foo", "END");
+
+		// Have big key names
+		for(int i = 100000; i <= 102010; i++){
+
+			char* key = get_key_name(i);
+			obj->get_and_assert_key(key, "END");
+		}
+
+	}
+}
 
 void set_large_workload(conn* obj){
 
@@ -321,6 +511,49 @@ void set_large_workload(conn* obj){
 	}
 }
 
+void set_workload_meta_cmds(conn* obj){
+
+	obj->add_kv_cmd("ma mo\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(.*)\r\n"));
+
+    obj->add_kv_cmd("ma mo D1\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(.*)\r\n"));
+
+    obj->add_kv_cmd("set mo 0 0 1\r\n1\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+
+    obj->add_kv_cmd("ma mo\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(.*)\r\n"));
+
+    obj->add_kv_cmd("set mo 0 0 1\r\nq\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+
+    obj->add_kv_cmd("ma mo\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(CLIENT_ERROR|OK)(.*)\r\n"));
+
+    obj->add_kv_cmd("ma key1 N90\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(OK)(.*)\r\n"));
+
+    obj->add_kv_cmd("mg key1 s t v Ofoo k\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA 1[ ])(s[0-9][ ])(t(([1-8][0-9])|90)[ ])(Ofoo[ ])(.*)\r\n" ));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(13|14|15)\r\n"));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(14|15|16)\r\n"));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t D30\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(44|45|46|74|75|76)\r\n"));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t MD D30\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(44|45|46|14|15|16)\r\n"));
+
+    obj->add_kv_cmd("ma mi N0 C99999 v\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(EX)(.*)\r\n"));
+
+}
+
 void init_sockets(){
 
 	if(global_conns == NULL){
@@ -331,7 +564,11 @@ void init_sockets(){
 
 		conn* new_con = new conn();
 		//set_workload(new_con);  // <<--- General Stress testing of memcached
-		set_workload_lru(new_con); // <<--- For Data race bug
+		//set_workload_lru(new_con); // <<--- For testing LRU crawler thread
+		//set_workload_extstore(new_con); // <<-- For testing extstore thread
+		//set_workload_slab_rebalance(new_con); // <<-- For slab rebalance thread
+		//set_workload_logger(new_con); // <<-- For testing logger thread
+		set_workload_meta_cmds(new_con); // <<-- For testing meta commands
 		global_conns->push_back(new_con);
 	}
 }
@@ -362,13 +599,13 @@ ssize_t CT_socket_write(int fd, void* buff, int count){
 	conn* obj = (conn*)(it->second);
 
 	string st = obj->get_next_cmd();
-	char msg[1024];
+	//char msg[10240];
 
 	// Convert string object to C strings and copy it info the buffer
-	strcpy(msg, st.c_str());
-	memcpy(buff, msg, strlen(msg));
+	//strcpy(msg, st.c_str());
+	memcpy(buff, st.c_str(), strlen(st.c_str()));
 
-	return strlen(msg);
+	return strlen(st.c_str());
 }
 
 ssize_t CT_socket_read(int fd, const void* buff, int count){
@@ -397,6 +634,25 @@ ssize_t CT_socket_read(int fd, const void* buff, int count){
 			obj->expected_response->erase(it);
 			return count;
 		}
+
+		if(p->first == obj->char_to_string("watch")){
+
+			ssize_t retval = parse_watch_response((char*)buff, p->second);
+
+			printf("Recieved on connection number %d, watch with keys: %s ", fd, (char*)buff);
+
+			if(retval != -1)
+				obj->expected_response->erase(it);
+			else
+				return count; // Return only a fraction of te total data. This will cause the buffer to get full
+
+			return count;
+		}
+	}
+	else{
+
+		// If the client is not expecting any response, then just exit this function!
+		return 0;
 	}
 
 	assert(0);
@@ -449,9 +705,36 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			return retval;
 		}
 
+		if(p->first == obj->char_to_string("stats settings")){
+
+			ssize_t retval = parse_stats_settings_response(msg, p->second);
+
+			printf("Recieved on connection number %d, metadump with val: %s", fd, (p->second).c_str());
+			obj->expected_response->erase(it);
+			return retval;
+		}
+
+		if(p->first == obj->char_to_string("stats gen")){
+
+			ssize_t retval = parse_stats_gen_response(msg, p->second);
+
+			printf("Recieved on connection number %d, metadump with val: %s", fd, (p->second).c_str());
+			obj->expected_response->erase(it);
+			return retval;
+		}
+
 		if(p->first == obj->char_to_string("generic")){
 
 			ssize_t retval = parse_generic_response(msg, p->second);
+
+			printf("Recieved on connection number %d, msg: %s", fd, (char*)(msg->msg_iov->iov_base));
+			obj->expected_response->erase(it);
+			return retval;
+		}
+
+		if(p->first == obj->char_to_string("meta")){
+
+			ssize_t retval = parse_meta_response(msg, p->second);
 
 			printf("Recieved on connection number %d, msg: %s", fd, (char*)(msg->msg_iov->iov_base));
 			obj->expected_response->erase(it);
@@ -472,10 +755,10 @@ int CT_new_socket(){
 
 	// Block the dispatcher thread, when we have already created all the sockets
 	if(count_num_sockets == i){
-		//while(1){
-		//	FFI_schedule_next();
-		//}
-		return -1;
+		while(1){
+			FFI_schedule_next();
+		}
+		//return -1;
 	}
 
 	conn* c = global_conns->at(i);
@@ -491,12 +774,15 @@ int set_options(int argc, char** argv, char** new_argv){
 		new_argv[i] = argv[i];
 	}
 
-	char new_opt[4][30] = {"-m", "32", "-o", "no_modern"};
+	//char new_opt[4][30] = {"-m", "32", "-o", "no_modern"}; // <-- For Lru crawler testcase
+	//char new_opt[7][500] = {"-m", "64", "-U", "0", "-o", "ext_page_size=8,ext_wbuf_size=2,ext_threads=1,ext_io_depth=2,ext_item_size=512,ext_item_age=2,ext_recache_rate=10000,ext_max_frag=0.9,ext_path=/temp/extstore.1:64m,slab_automove=0,ext_compact_under=1"};
+	//char new_opt[6][100] = {"-m", "2", "-o", "slab_reassign"};
+	char new_opt[4][100] = {"-m", "60", "-o", "watcher_logbuf_size=8"};
 	int num_new_opt = 4;
 
 	for(int j = 0; i < (argc + num_new_opt); i++, j++){
 
-		memcpy(new_argv[i], new_opt[j], 30);
+		memcpy(new_argv[i], new_opt[j], 500);
 	}
 
 	return argc + num_new_opt;
@@ -511,7 +797,7 @@ int CT_main( int (*run_iteration)(int, char**), int argc, char** argv ){
 
 	char **new_argv = (char **)malloc(50 * sizeof(char *));
 	for(int i = 0; i < 50; i++){
-		new_argv[i] = (char *)malloc(50 * sizeof(char));
+		new_argv[i] = (char *)malloc(500 * sizeof(char));
 	}
 
 	int new_argc = set_options(argc, argv, new_argv);

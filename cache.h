@@ -113,5 +113,4 @@ void do_cache_free(cache_t* handle, void* ptr);
  * @param limit the number of objects to cache before returning NULL
  */
 void cache_set_limit(cache_t* handle, int limit);
-
 #endif

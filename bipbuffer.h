@@ -83,5 +83,4 @@ int bipbuf_used(const bipbuf_t* cb);
 /**
  * @return bytes of unused space */
 int bipbuf_unused(const bipbuf_t* me);
-
 #endif /* BIPBUFFER_H */

@@ -103,6 +103,13 @@ typedef struct {
 
 static lru_bump_buf *bump_buf_head = NULL;
 static lru_bump_buf *bump_buf_tail = NULL;
+
+// For coyote purpose
+static void reset_lru_bumps(){
+    bump_buf_head = NULL;
+    bump_buf_tail = NULL;
+}
+
 static pthread_mutex_t bump_buf_lock = PTHREAD_MUTEX_INITIALIZER;
 /* TODO: tunable? Need bench results */
 #define LRU_BUMP_BUF_SIZE 8192
@@ -1547,13 +1554,13 @@ static void lru_maintainer_crawler_check(struct crawler_expired_data *cdata, log
 
 slab_automove_reg_t slab_automove_default = {
     .init = slab_automove_init,
-    .free = slab_automove_free,
+    .free_fun = slab_automove_free,
     .run = slab_automove_run
 };
 #ifdef EXTSTORE
 slab_automove_reg_t slab_automove_extstore = {
     .init = slab_automove_extstore_init,
-    .free = slab_automove_extstore_free,
+    .free_fun = slab_automove_extstore_free,
     .run = slab_automove_extstore_run
 };
 #endif
@@ -1653,7 +1660,7 @@ static void *lru_maintainer_thread(void *arg) {
 
         if (settings.slab_automove == 1 && last_automove_check != current_time) {
             if (last_ratio != settings.slab_automove_ratio) {
-                sam->free(am);
+                sam->free_fun(am);
                 am = sam->init(&settings);
                 last_ratio = settings.slab_automove_ratio;
             }
@@ -1674,7 +1681,7 @@ static void *lru_maintainer_thread(void *arg) {
         }
     }
     pthread_mutex_unlock(&lru_maintainer_lock);
-    sam->free(am);
+    sam->free_fun(am);
     // LRU crawler *must* be stopped.
     free(cdata);
     if (settings.verbose > 2)

@@ -9,6 +9,16 @@
 
 #include "cache.h"
 
+void FFI_free(void*);
+void* FFI_realloc(void*, size_t);
+void* FFI_calloc(size_t, size_t);
+void* FFI_malloc(size_t);
+
+#define malloc(x) FFI_malloc(x)
+#define calloc(x, y) FFI_calloc(x, y)
+#define realloc(x, y) FFI_realloc(x, y)
+#define free(x) FFI_free(x)
+
 #ifndef NDEBUG
 const uint64_t redzone_pattern = 0xdeadbeefcafebabe;
 int cache_error = 0;

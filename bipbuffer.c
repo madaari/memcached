@@ -15,6 +15,16 @@
 
 #include "bipbuffer.h"
 
+void FFI_free(void*);
+void* FFI_realloc(void*, size_t);
+void* FFI_calloc(size_t, size_t);
+void* FFI_malloc(size_t);
+
+#define malloc(x) FFI_malloc(x)
+#define calloc(x, y) FFI_calloc(x, y)
+#define realloc(x, y) FFI_realloc(x, y)
+#define free(x) FFI_free(x)
+
 static size_t bipbuf_sizeof(const unsigned int size)
 {
     return sizeof(bipbuf_t) + size;

@@ -12,6 +12,8 @@ extern "C"{
 	int FFI_pthread_cond_init(void* ptr, void* attr);
 	int FFI_pthread_cond_wait(void* cond, void* mutex);
 	int FFI_pthread_cond_signal(void* cond);
+	int FFI_pthread_cond_destroy(void* ptr);
+	int FFI_pthread_mutex_destroy(void* ptr);
 }
 
 #include <event.h>
@@ -56,12 +58,18 @@ struct worker_locks{
 	int cond;
 	bool is_lock;
 	bool restart;
+	bool is_signaled;
 
 	worker_locks(){
 		FFI_pthread_mutex_init(&lock, NULL);
 		FFI_pthread_cond_init(&cond, NULL);
 		is_lock = true;
 		restart = false;
+		is_signaled = false;
+	}
+	~worker_locks(){
+		FFI_pthread_mutex_destroy(&lock);
+		FFI_pthread_cond_destroy(&cond);
 	}
 };
 
@@ -193,10 +201,9 @@ int FFI_event_del(event* ev){
 	assert(it2 != map_fd_to_event->end() && "Interesting! file descriptor not found");
 
 	map_fd_to_event->erase(it2);
-	map_event_to_mocked_event->erase(it);
 	delete m_ev;
+	map_event_to_mocked_event->erase(it);
 
-	//return event_del(ev);
 	return 0;
 }
 
@@ -242,9 +249,14 @@ int FFI_event_base_loop(void* ev_base, int flags){
 		// If it is not restarted, wait for someone to signal me
 		if(!isRestarted){
 
-			FFI_pthread_mutex_lock(&(wl->lock));
-			FFI_pthread_cond_wait(&(wl->cond), &(wl->lock));
-			FFI_pthread_mutex_unlock(&(wl->lock));
+			// If it is already signaled, leave this.
+			if(!(wl->is_signaled)){
+				FFI_pthread_mutex_lock(&(wl->lock));
+				FFI_pthread_cond_wait(&(wl->cond), &(wl->lock));
+				FFI_pthread_mutex_unlock(&(wl->lock));
+			}
+			// We can safely set the is_signaled bool var to false, after reading it.
+			wl->is_signaled = false;
 
 		}else{
 
@@ -282,10 +294,13 @@ int FFI_event_base_loop(void* ev_base, int flags){
 			}
 		}
 
-		// For final registration
-		FFI_pthread_mutex_lock(&(wl_original->lock));
-		FFI_pthread_cond_wait(&(wl_original->cond), &(wl_original->lock));
-		FFI_pthread_mutex_unlock(&(wl_original->lock));
+		if(!(wl->is_signaled)){
+			// For final registration
+			FFI_pthread_mutex_lock(&(wl_original->lock));
+			FFI_pthread_cond_wait(&(wl_original->cond), &(wl_original->lock));
+			FFI_pthread_mutex_unlock(&(wl_original->lock));
+		}
+		wl->is_signaled = false;
 
 		if(wl_original->restart != true)
 			return 0;
@@ -356,6 +371,7 @@ ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 	}
 
 	// Signal the worker!!!!!
+	wl->is_signaled = true;
 	FFI_pthread_cond_signal(&(wl->cond));
 	FFI_schedule_next();
 

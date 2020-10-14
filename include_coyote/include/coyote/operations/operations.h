@@ -5,8 +5,6 @@
 #define COYOTE_OPERATIONS_H
 
 #include <vector>
-#include <list>
-#include <algorithm>
 
 namespace coyote
 {
@@ -34,9 +32,6 @@ namespace coyote
 		void disable(size_t operation_id);
 
 		size_t size(bool is_enabled = true);
-
-		// Return a vector of enabled operations
-		std::vector<size_t> get_enabled_operation_ids();
 
 		void clear();
 

@@ -53,9 +53,8 @@ int run_coyote_iteration(int argc, char **argv);
 // Defined in coyote_mc_wrapper.c
 void FFI_check_stats_data_race(bool isWrite);
 
+// Functions to reset global variables in all the files
 void reset_all_globals(void);
-
-// Functions to reset global variables in all files
 void reset_logger_globals(void);
 void reset_memcached_globals(void);
 void reset_thread_globals(void);

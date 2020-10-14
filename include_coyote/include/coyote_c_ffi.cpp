@@ -14,6 +14,7 @@
 #include <cassert>
 #include <climits>
 #include <errno.h>
+#include <algorithm>
 
 // Require C++11
 #include <unordered_map>
@@ -23,6 +24,7 @@ typedef unsigned long long llu;
 
 Scheduler* scheduler = NULL;
 
+#define INTERCEPT_HEAP_ALLOCATORS
 // Use this flag to enable printf statements in functions modelling pthread APIs
 // #define DEBUG_PTHREAD_API 1
 
@@ -390,7 +392,9 @@ size_t FFI_next_integer(size_t max_value){
 
 	assert(scheduler != NULL && "Wrong sequence of API calls. Create Coyote Scheduler first.");
 
-	return scheduler->next_integer(max_value);
+	//assert(0 && "Fix this!!");
+	return scheduler->next_integer((long unsigned)max_value);
+	//return 0;
 }
 
 size_t FFI_seed(){
@@ -910,161 +914,84 @@ int FFI_pthread_cond_destroy(void* ptr){
 
 } //End of Extern "C"
 
-#if 0
+#ifdef INTERCEPT_HEAP_ALLOCATORS
 
-/******************************************** CoyoteOps Start ****************************************/
+std::vector<void*>* allocation_vector = NULL;
 
-// Contains definition of the type pthread_t
-#include <pthread.h>
+void add_to_allocation_vector(void* ptr){
 
-// Global counter
-size_t total_operation_count = 1;
+	if(allocation_vector == NULL){
+		allocation_vector = new std::vector<void*>();
+	}
+	assert(allocation_vector != NULL && "Heap memory full; Not able to allocate");
 
-// Global map between Coyote operation id and pthread thread id. We have kept a boolean flag to indicate
-// that a perticular mapping is valid or not
-std::unordered_map<pthread_t, std::pair<size_t, bool>>* coyote_ops_hash_map = NULL;
+	allocation_vector->push_back(ptr);
+}
 
-// Synchronize operations on hash map!
-int coyote_ops_hash_map_mutex = 0;
+void remove_from_allocation_vector(void* ptr){
+
+	assert(allocation_vector != NULL);
+
+	std::vector<void*>::iterator it = std::find(allocation_vector->begin(), allocation_vector->end(), ptr);
+
+	if(it != allocation_vector->end()){
+
+		allocation_vector->erase(it);
+	}
+}
+
+void clear_allocation_vector(){
+
+	if(allocation_vector == NULL) return;
+
+	std::vector<void*>::iterator it = allocation_vector->begin();
+	for(; it != allocation_vector->end(); it++){
+
+		void* ptr = *(it);
+
+		free(ptr);
+		*(it) = NULL;
+	}
+
+	delete allocation_vector;
+	allocation_vector = NULL;
+}
 
 extern "C"{
 
-void FFI_create_pthread_task(pthread_t tid){
+	void* FFI_malloc(size_t s){
 
-	// Initialize the map
-	if(coyote_ops_hash_map == NULL){
-		coyote_ops_hash_map = new std::unordered_map<pthread_t, std::pair<size_t, bool>>();
-		FFI_pthread_mutex_init(&coyote_ops_hash_map_mutex);
+		void* retval = malloc(s);
+		add_to_allocation_vector(retval);
+		return retval;
 	}
 
-	FFI_pthread_mutex_lock(&coyote_ops_hash_map_mutex);
+	void* FFI_calloc(size_t a, size_t b){
 
-	assert(coyote_ops_hash_map != NULL && "coyote_ops_hash_map is NULL!");
-
-	std::unordered_map<pthread_t, std::pair<size_t, bool>>::iterator it = coyote_ops_hash_map->find(tid);
-
-	// If this item is already in the map. Make sure the entry is invalid and remove it!
-	if(it != coyote_ops_hash_map->end()){
-
-		assert(((*it).second).second == false && "This entry is still valid." &&
-		"Can not overwrite it!");
-
-		coyote_ops_hash_map->erase(it);
+		void* retval = calloc(a, b);
+		add_to_allocation_vector(retval);
+		return retval;
 	}
 
-	// Insert in the hash map and create a new coyote operation
-	bool rv = (coyote_ops_hash_map->insert({tid, {total_operation_count, true}})).second;
-	assert(rv == true && "Insertion into hash map failed!");
+	void* FFI_realloc(void* ptr, size_t s){
 
-	FFI_pthread_mutex_unlock(&coyote_ops_hash_map_mutex);
+		remove_from_allocation_vector(ptr);
 
-	FFI_create_operation(total_operation_count);
-
-#ifdef DEBUG_PTHREAD_API
-	printf("Created Coyote operation id: %lu \n", total_operation_count);
-#endif
-
-	total_operation_count++;
-}
-
-void FFI_start_pthread_task(pthread_t tid){
-
-	FFI_pthread_mutex_lock(&coyote_ops_hash_map_mutex);
-
-	assert(coyote_ops_hash_map != NULL &&
-		"Wrong sequence of API calls; Initialize the coyote_op hash map first");
-
-	std::unordered_map<pthread_t, std::pair<size_t, bool>>::iterator it = coyote_ops_hash_map->find(tid);
-	assert(it != coyote_ops_hash_map->end() && "This pthread id is not registered in the map");
-
-	size_t coyote_op_id = ((*it).second).first;
-
-	assert(((*it).second).second == true && "This entry is invalid." &&
-		"Can it be possible that this function is called after complete or join operation?");
-
-	FFI_pthread_mutex_unlock(&coyote_ops_hash_map_mutex);
-
-	FFI_start_operation(coyote_op_id);
-
-#ifdef DEBUG_PTHREAD_API
-	printf("Started Coyote operation id: %lu \n", coyote_op_id);
-#endif
-}
-
-void FFI_complete_pthread_task(pthread_t tid){
-
-	assert(coyote_ops_hash_map != NULL &&
-		"Wrong sequence of API calls; Initialize the coyote_op hash map first");
-
-	FFI_pthread_mutex_lock(&coyote_ops_hash_map_mutex);
-
-	std::unordered_map<pthread_t, std::pair<size_t, bool>>::iterator it = coyote_ops_hash_map->find(tid);
-	assert(it != coyote_ops_hash_map->end() && "This pthread id is not registered in the map");
-
-	size_t coyote_op_id = ((*it).second).first;
-
-	assert(((*it).second).second == true && "This entry is invalid." &&
-		"Can it be possible that this function is called after complete or join operation?");
-
-	// Mark this entry as invalid in the hash map
-	it->second = {coyote_op_id, false};
-
-	FFI_pthread_mutex_unlock(&coyote_ops_hash_map_mutex);
-
-	FFI_complete_operation(coyote_op_id);
-	// Don't delete the entry from the hash map as there can be a
-	// join_operation call after complete_operation. Just mark the
-	// entry as invalid.
-
-#ifdef DEBUG_PTHREAD_API
-	printf("Completed Coyote operation id: %lu \n", coyote_op_id);
-#endif
-}
-
-void FFI_join_pthread_task(pthread_t tid){
-
-	assert(coyote_ops_hash_map != NULL &&
-		"Wrong sequence of API calls; Initialize the coyote_op hash map first");
-
-	FFI_pthread_mutex_lock(&coyote_ops_hash_map_mutex); /* Lock the mutex */
-
-	std::unordered_map<pthread_t, std::pair<size_t, bool>>::iterator it = coyote_ops_hash_map->find(tid);
-	assert(it != coyote_ops_hash_map->end() && "This pthread id is not registered in the map");
-
-	size_t coyote_op_id = ((*it).second).first;
-
-	// Mark this entry as invalid in the hash map
-	it->second = {coyote_op_id, false};
-
-	FFI_pthread_mutex_unlock(&coyote_ops_hash_map_mutex); /* Unlock the mutex */
-
-	FFI_join_operation(coyote_op_id);
-
-	FFI_pthread_mutex_lock(&coyote_ops_hash_map_mutex); /* Lock the mutex */
-
-	coyote_ops_hash_map->erase(it);
-
-	FFI_pthread_mutex_unlock(&coyote_ops_hash_map_mutex); /* Unlock the mutex */
-
-#ifdef DEBUG_PTHREAD_API
-	printf("Joined Coyote operation id: %lu \n", coyote_op_id);
-#endif
-}
-
-void clean_coyote_ops_hash_map(){
-
-	if(coyote_ops_hash_map != NULL){
-
-		coyote_ops_hash_map->clear();
-
-		// Destroy and reset global variables
-		FFI_pthread_mutex_destroy(&coyote_ops_hash_map_mutex);
-		total_operation_count  =1;
+		void* retval = realloc(ptr, s);
+		add_to_allocation_vector(retval);
+		return retval;
 	}
-}
 
-} // End of ectern "C"
+	void FFI_free(void* ptr){
 
-/******************************************** CoyoteOps End ******************************************/
+		remove_from_allocation_vector(ptr);
+		free(ptr);
+	}
 
+	void FFI_free_all(){
+
+		clear_allocation_vector();
+	}
+
+} // End of Extern "C"
 #endif

@@ -12,10 +12,7 @@
 #include "error_code.h"
 #include "operations/operation.h"
 #include "operations/operations.h"
-#include "strategies/Probabilistic/random_strategy.h"
-#include "strategies/Exhaustive/dfs_strategy.h"
-#include "strategies/strategy.h"
-#include "strategies/testing_strategy.h"
+#include "strategies/random_strategy.h"
 
 namespace coyote
 {
@@ -23,13 +20,7 @@ namespace coyote
 	{
 	private:
 		// Strategy for exploring the execution of the client program.
-		std::unique_ptr<TestingStrategy> strategy;
-
-		// The testing strategy to use.
-		std::string scheduling_strategy;
-
-		// The seed used by random strategy. By default 'null' for other strategy.
-		size_t random_seed = NULL;
+		std::unique_ptr<RandomStrategy> strategy;
 
 		// Map from unique operation ids to operations.
 		std::map<size_t, std::unique_ptr<Operation>> operation_map;
@@ -68,7 +59,6 @@ namespace coyote
 	public:
 		Scheduler() noexcept;
 		Scheduler(size_t seed) noexcept;
-		Scheduler(std::string str) noexcept;
 
 		// Attaches to the scheduler. This should be called at the beginning of a testing iteration.
 		// It creates a main operation with id '0'.
@@ -102,7 +92,7 @@ namespace coyote
 		// Waits the resources with the specified ids to become available and schedules the next operation.
 		ErrorCode wait_resources(const size_t* resource_ids, size_t size, bool wait_all) noexcept;
         
-		// Signals the resource with the specified id is available.
+		// Signals all waiting operations that the resource with the specified id is available.
 		ErrorCode signal_resource(size_t resource_id) noexcept;
 
 		// Signals the waiting operation that the resource with the specified id is available.
@@ -119,7 +109,7 @@ namespace coyote
 		bool next_boolean() noexcept;
 
 		// Returns a controlled nondeterministic integer value chosen from the [0, max_value) range.
-		int next_integer(int max_value) noexcept;
+		size_t next_integer(size_t max_value) noexcept;
 
 		// Returns a seed that can be used to reproduce the current testing iteration.
 		size_t seed() noexcept;
@@ -127,7 +117,7 @@ namespace coyote
 		// Returns the last error code, if there is one assigned.
 		ErrorCode error_code() noexcept;
 
-		// Return id of the current operation
+		// Return the id of the current operation
 		size_t get_operation_id() noexcept;
 
 	private:

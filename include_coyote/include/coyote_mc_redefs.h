@@ -28,10 +28,17 @@ void reset_logger_globals(){
 
 #ifdef IN_MEMCACHED_FILE
 
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+
 static volatile bool allow_new_conns;
 void *ext_storage;
 static conn *listen_conn;
 static int stop_main_loop;
+extern conn **conns;
+static int do_run_conn_timeout_thread;
+static bool monotonic;
+volatile int slab_rebalance_signal;
+extern int optind;
 
 void reset_memcached_globals(){
 
@@ -39,6 +46,11 @@ void reset_memcached_globals(){
 	ext_storage = NULL;
 	listen_conn = NULL;
 	stop_main_loop = 0;
+	slab_rebalance_signal = 0;
+	monotonic = false;
+	do_run_conn_timeout_thread = 0;
+	conns = NULL;
+	optind = 0;
 }
 #endif /*IN_MEMCACHED_FILE*/
 
@@ -106,6 +118,8 @@ void reset_crawler_globals(){
 
 #ifdef IN_ITEMS_FILE
 
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+
 static pthread_mutex_t bump_buf_lock;
 static uint64_t cas_id;
 static pthread_mutex_t cas_id_lock;
@@ -116,7 +130,10 @@ static int stats_sizes_buckets;
 static uint64_t stats_sizes_cas_min;
 static unsigned int *stats_sizes_hist;
 static pthread_mutex_t stats_sizes_lock;
+static item *tails[256];
+static item *heads[256];
 
+static void reset_lru_bumps(void);
 void reset_items_globals(){
 
 	FFI_pthread_mutex_lazy_init(&bump_buf_lock);
@@ -129,6 +146,13 @@ void reset_items_globals(){
 	stats_sizes_buckets = 0;
 	stats_sizes_cas_min = 0;
 	stats_sizes_hist = NULL;
+
+	for(int i = 0; i < 255; i++){
+		tails[i] = NULL;
+		heads[i] = NULL;
+	}
+
+	reset_lru_bumps();
 }
 #endif /*IN_ITEMS_FILE*/
 
@@ -222,14 +246,21 @@ void reset_slabs_globals(){
 #endif
 #endif
 
-// We doen't yet support accept4() sys call while testing
+// We doen't yet support accept4() and get_opt_long() sys call while testing
 #undef HAVE_ACCEPT4
+#undef HAVE_GETOPT_LONG
 
 #define main(x, y) run_coyote_iteration(x, y)
 
 #define usleep(x) {usleep(0); FFI_schedule_next();}
 
 #define setbuf(x, y) { setbuf(x, y); FFI_register_clock_handler(clock_handler); FFI_register_main_stop(&stop_main_loop);}
+
+// Intercept all the heap allocators to release heap after every iteration
+#define malloc(x) FFI_malloc(x)
+#define calloc(x, y) FFI_calloc(x, y)
+#define realloc(x, y) FFI_realloc(x, y)
+#define free(x) FFI_free(x)
 
 // #define COYOTE_2019_BUGS // For introducing data race bugs
 

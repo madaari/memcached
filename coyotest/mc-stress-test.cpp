@@ -7,7 +7,7 @@ using namespace std;
 vector<conn*>* global_conns;
 
 // To disable printf statements
-#define printf(x, ...)
+// #define printf(x, ...)
 
 char* get_key_name(int i, char prefix = ' '){
 
@@ -634,7 +634,10 @@ ssize_t CT_socket_read(int fd, const void* buff, int count){
 			ssize_t retval = parse_lru_crawler_metadump_response((char*)buff, p->second);
 
 			printf("Recieved on connection number %d, lru crawler metadump with keys: %s ", fd, (p->second).c_str());
+
+			delete p;
 			obj->expected_response->erase(it);
+
 			return count;
 		}
 
@@ -644,8 +647,10 @@ ssize_t CT_socket_read(int fd, const void* buff, int count){
 
 			printf("Recieved on connection number %d, watch with keys: %s ", fd, (char*)buff);
 
-			if(retval != -1)
+			if(retval != -1){
+				delete p;
 				obj->expected_response->erase(it);
+			}
 			else
 				return count; // Return only a fraction of te total data. This will cause the buffer to get full
 
@@ -686,6 +691,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_get_response(msg, p->second);
 
 			printf("Recieved on connection number %d, msg: %s", fd, (char*)(msg->msg_iov->iov_base));
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -695,6 +702,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_stats_slabs_response(msg, p->second);
 
 			printf("Recieved on connection number %d, metadump with val: %s", fd, (p->second).c_str());
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -704,6 +713,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_stats_items_response(msg, p->second);
 
 			printf("Recieved on connection number %d, metadump with val: %s", fd, (p->second).c_str());
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -713,6 +724,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_stats_settings_response(msg, p->second);
 
 			printf("Recieved on connection number %d, metadump with val: %s", fd, (p->second).c_str());
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -722,6 +735,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_stats_gen_response(msg, p->second);
 
 			printf("Recieved on connection number %d, metadump with val: %s", fd, (p->second).c_str());
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -731,6 +746,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_generic_response(msg, p->second);
 
 			printf("Recieved on connection number %d, msg: %s", fd, (char*)(msg->msg_iov->iov_base));
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -740,6 +757,8 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 			ssize_t retval = parse_meta_response(msg, p->second);
 
 			printf("Recieved on connection number %d, msg: %s", fd, (char*)(msg->msg_iov->iov_base));
+
+			delete p;
 			obj->expected_response->erase(it);
 			return retval;
 		}
@@ -775,7 +794,7 @@ int set_options(int argc, char** argv, char** new_argv){
 
 	int i = 0;
 	for(i = 0; i < argc; i++){
-		new_argv[i] = argv[i];
+		memcpy(new_argv[i], argv[i], 500);
 	}
 
 	//char new_opt[4][30] = {"-m", "32", "-o", "no_modern"}; // <-- For Lru crawler testcase
@@ -798,7 +817,7 @@ int set_options(int argc, char** argv, char** new_argv){
 // Test main method
 int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), int argc, char** argv ){
 
-	FFI_create_scheduler();
+	FFI_create_scheduler_w_seed(1602651192494780357);
 
 	int num_iter = 1;
 
@@ -812,9 +831,9 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 	// Lights, Camera, Action!
 	for(int j = 0; j < num_iter; j++){
 
-		printf("Starting iteration #%d \n", j);
-
 		FFI_attach_scheduler();
+
+		printf("Starting iteration #%d seed: %lu \n", j, FFI_seed());
 
 		init_sockets();
 
@@ -822,12 +841,19 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 
 		FFI_detach_scheduler();
 		FFI_scheduler_assert();
-		reset_all_globals();
 
-		del_sockets();
+		// Reset program state
+		reset_all_globals(); // For resetting globals and libevent
+		FFI_free_all(); // For heap allocations
+		del_sockets(); // For resetting client connection sockets
 	}
 
 	FFI_delete_scheduler();
+
+	for(int i = 0; i < 50; i++){
+		free(new_argv[i]);
+	}
+	free(new_argv);
 
 	return 0;
 }

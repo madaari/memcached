@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#define INTERCEPT_HEAP_ALLOCATORS
+
 // FFI for Coyote create_scheduler(void) API call
 #ifndef DISABLE_COYOTE_FFI
 	void FFI_create_scheduler();
@@ -300,34 +302,36 @@
 	#define FFI_set_state_write()
 #endif
 
-
-#if 0
-
-// Required for pthread_t type
-#include <pthread.h>
+#ifdef INTERCEPT_HEAP_ALLOCATORS
 
 #ifndef DISABLE_COYOTE_FFI
-	void FFI_create_pthread_task(pthread_t tid);
+	void* FFI_malloc(size_t);
 #else
-	#define FFI_create_pthread_task(x)
+	#define FFI_malloc(x)
 #endif
 
 #ifndef DISABLE_COYOTE_FFI
-	void FFI_start_pthread_task(pthread_t tid);
+	void* FFI_calloc(size_t, size_t);
 #else
-	#define FFI_start_pthread_task(x)
+	#define FFI_calloc(x, y)
 #endif
 
 #ifndef DISABLE_COYOTE_FFI
-	void FFI_complete_pthread_task(pthread_t tid);
+	void* FFI_realloc(void*, size_t);
 #else
-	#define FFI_complete_pthread_task(x)
+	#define FFI_realloc(x, y)
 #endif
 
 #ifndef DISABLE_COYOTE_FFI
-	void FFI_join_pthread_task(pthread_t tid);
+	void FFI_free(void*);
 #else
-	#define FFI_join_pthread_task(x)
+	#define FFI_free(x)
+#endif
+
+#ifndef DISABLE_COYOTE_FFI
+	void FFI_free_all(void);
+#else
+	#define FFI_free_all()
 #endif
 
 #endif

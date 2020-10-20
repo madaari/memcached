@@ -58,6 +58,67 @@ static bool expanding = false;
  */
 static unsigned int expand_bucket = 0;
 
+#ifdef COYOTE_CONTROLLED
+uint32_t FFI_get_item_hash(item* it){
+
+    // Make hash sensitive to size of key, value, slabs_clsid, refcount
+    uint32_t retval = 0;
+    //retval = ((it->nkey)*(3) + (it->nbytes)*(9)) % (1<<30);
+    retval = (retval + (it->slabs_clsid)*(27) + (it->refcount)*(81)) % (1<<30);
+
+    printf("Taking hash. For Key: %s, got refcount: %d, slabs_clsid: %d \n", ITEM_key(it), it->refcount, it->slabs_clsid);
+
+    char* k = ITEM_key(it);
+    char* v = ITEM_data(it);
+
+    // Calculate hash of first 8 bits of key
+    int i = 0;
+    int key_len = (it->nkey < 8)?(it->nkey):8;
+    for(; i < key_len; i++){
+        if(k[i] == '\0')
+            break;
+        retval = (retval + k[i] * (1<<i)) % (1<<30);
+    }
+
+    // Calculate hash of first 8 bits of value
+    i = 0;
+    int val_len = (it->nbytes < 8)?(it->nbytes):8;
+    for(; i < val_len; i++){
+
+        if(v[i] == '\r')
+            break;
+        retval = (retval + v[i] * (1<<i)) % (1<<30);
+    }
+
+    return retval;
+}
+
+uint32_t FFI_assoc_hash(void){
+
+    uint32_t seq_hash = 0;
+    uint32_t items_hash = 0;
+
+    for(int j = 0; j < hv_counter; j++){
+
+        uint32_t temp_hash = hv_vector[j];
+
+        // For preserving the sequence in which KV pairs are added
+        seq_hash += (temp_hash * (1<<j)) % (1<<30);
+        seq_hash = seq_hash % (1<<30);
+
+        // For preserving the KV mappings
+        item *it = primary_hashtable[temp_hash & hashmask(hashpower)];
+        // If this has been removed
+        if(it == NULL)
+            continue;
+
+        items_hash = (FFI_get_item_hash(it) + items_hash)%(1 << 30);
+    }
+
+    return (items_hash + seq_hash)%(1<<30);
+}
+#endif
+
 void assoc_init(const int hashtable_init) {
     if (hashtable_init) {
         hashpower = hashtable_init;
@@ -168,6 +229,10 @@ int assoc_insert(item *it, const uint32_t hv) {
     }
 
     MEMCACHED_ASSOC_INSERT(ITEM_key(it), it->nkey);
+
+#ifdef COYOTE_CONTROLLED
+    FFI_store_hv(hv);
+#endif
     return 1;
 }
 

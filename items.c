@@ -108,6 +108,12 @@ static lru_bump_buf *bump_buf_tail = NULL;
 static void reset_lru_bumps(){
     bump_buf_head = NULL;
     bump_buf_tail = NULL;
+    int i;
+    for (i = 0; i < LARGEST_ID; i++) {
+        memset(&itemstats[i], 0, sizeof(itemstats_t));
+        memset(&sizes[i], 0, sizeof(unsigned int));
+        memset(&sizes_bytes[i], 0, sizeof(uint64_t));
+    }
 }
 
 static pthread_mutex_t bump_buf_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -494,20 +500,29 @@ static void item_unlink_q(item *it) {
 int do_item_link(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_LINK(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & (ITEM_LINKED|ITEM_SLABBED)) == 0);
+    FFI_schedule_next();
     it->it_flags |= ITEM_LINKED;
+    FFI_schedule_next();
     it->time = current_time;
 
     STATS_LOCK();
     stats_state.curr_bytes += ITEM_ntotal(it);
+    FFI_schedule_next();
     stats_state.curr_items += 1;
+    FFI_schedule_next();
     stats.total_items += 1;
     STATS_UNLOCK();
 
     /* Allocate a new CAS ID on link. */
+    FFI_schedule_next();
     ITEM_set_cas(it, (settings.use_cas) ? get_cas_id() : 0);
+    FFI_schedule_next();
     assoc_insert(it, hv);
+    FFI_schedule_next();
     item_link_q(it);
+    FFI_schedule_next();
     refcount_incr(it);
+    FFI_schedule_next();
     item_stats_sizes_add(it);
 
     return 1;
@@ -906,8 +921,14 @@ void item_stats_sizes_enable(ADD_STAT add_stats, void *c) {
 
 void item_stats_sizes_disable(ADD_STAT add_stats, void *c) {
     mutex_lock(&stats_sizes_lock);
+
+    FFI_schedule_next();
     if (stats_sizes_hist != NULL) {
+
+        FFI_schedule_next();
         free(stats_sizes_hist);
+
+        FFI_schedule_next();
         stats_sizes_hist = NULL;
     }
     APPEND_STAT("sizes_status", "disabled", "");
@@ -915,11 +936,15 @@ void item_stats_sizes_disable(ADD_STAT add_stats, void *c) {
 }
 
 void item_stats_sizes_add(item *it) {
+
+    FFI_schedule_next();
     if (stats_sizes_hist == NULL || stats_sizes_cas_min > ITEM_get_cas(it))
         return;
     int ntotal = ITEM_ntotal(it);
     int bucket = ntotal / 32;
     if ((ntotal % 32) != 0) bucket++;
+
+    FFI_schedule_next();
     if (bucket < stats_sizes_buckets) stats_sizes_hist[bucket]++;
 }
 

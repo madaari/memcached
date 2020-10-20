@@ -995,3 +995,45 @@ extern "C"{
 
 } // End of Extern "C"
 #endif
+
+// For mantaining an extra DS that stores the KV mappings and order in which KV pairs are inserted.
+#ifdef HAVE_AUX_KV_STORE
+
+struct item{
+	char* key;
+	size_t key_size;
+	char* value;
+	size_t value_size;
+
+	item(char* _key, size_t _key_size, char* _value, size_t _value_size){
+
+		key = _key;
+		value = _value;
+		key_size = _key_size;
+		value_size = _value_size;
+	}
+	~item(){
+		key = NULL;
+		value = NULL;
+		key_size = 0;
+		value_size = 0;
+	}
+}
+
+std::queue< item* > q = NULL;
+extern "C"{
+
+	void FFI_kv_init(){
+		assert(q == NULL);
+		q = new std::queue<item*>();
+
+		assert(q != NULL && "Unable to allocate on heap");
+	}
+
+	void FFI_kv_insert(char* key, size_t key_size, char* value, size_t value_size){
+
+		assert(q != NULL && "Aux KV store not initialized");
+		q->enqueue(new item(key, key_size, value, value_size));
+	}
+}// End of extern "C"
+#endif

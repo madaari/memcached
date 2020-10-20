@@ -61,6 +61,14 @@ static void *storage  = NULL;
 static pthread_mutex_t slabs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t slabs_rebalance_lock = PTHREAD_MUTEX_INITIALIZER;
 
+// For coyote purpose
+static void reset_slab_classes(){
+    int i;
+    for (i = 0; i < MAX_NUMBER_OF_SLAB_CLASSES; i++) {
+        memset(&slabclass[i], 0, sizeof(slabclass_t));
+    }
+}
+
 /*
  * Forward Declarations
  */

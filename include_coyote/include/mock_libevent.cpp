@@ -229,8 +229,10 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 		mocked_event* m_ev = (mocked_event*)(it1->second);
 
+		FFI_schedule_next();
 		m_ev->callback_method(m_ev->sfd, m_ev->which, m_ev->args);
 
+		FFI_schedule_next();
 		clock_handler(0, 0, 0);
 
 		return 0;
@@ -286,8 +288,10 @@ int FFI_event_base_loop(void* ev_base, int flags){
 				if(cache_m_ev.callback_method == NULL)
 					cache_m_ev = *m_ev;
 
+				FFI_schedule_next();
 				m_ev->callback_method(m_ev->sfd, m_ev->which, m_ev->args);
-				clock_handler(0, 0, 0);
+				// Don't call clock_handler from worker thread, that would be a disaster
+				//clock_handler(0, 0, 0);
 			}
 			else{
 				break;

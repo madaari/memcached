@@ -256,7 +256,7 @@ static void settings_init(void) {
     settings.auth_file = NULL;        /* by default, not using ASCII authentication tokens */
     settings.factor = 1.25;
     settings.chunk_size = 48;         /* space for a modest key and value */
-    settings.num_threads = 2;         /* N workers */
+    settings.num_threads = 1;         /* N workers */
     settings.num_threads_per_udp = 0;
     settings.prefix_delimiter = ':';
     settings.detail_enabled = 0;
@@ -1507,8 +1507,10 @@ static int _store_item_copy_data(int comm, item *old_it, item *new_it, item *add
  * Returns the state of storage.
  */
 enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t hv) {
+    FFI_schedule_next();
     char *key = ITEM_key(it);
     item *old_it = do_item_get(key, it->nkey, hv, c, DONT_UPDATE);
+    FFI_schedule_next();
     enum store_item_type stored = NOT_STORED;
 
     enum cas_result { CAS_NONE, CAS_MATCH, CAS_BADVAL, CAS_STALE, CAS_MISS };
@@ -1522,7 +1524,9 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
     bool do_store = false;
     if (old_it != NULL) {
         // Most of the CAS work requires something to compare to.
+    	FFI_schedule_next();
         uint64_t it_cas = ITEM_get_cas(it);
+    	FFI_schedule_next();
         uint64_t old_cas = ITEM_get_cas(old_it);
         if (it_cas == 0) {
             cas_res = CAS_NONE;
@@ -1537,6 +1541,7 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
         switch (comm) {
             case NREAD_ADD:
                 /* add only adds a nonexistent item, but promote to head of LRU */
+    		FFI_schedule_next();
                 do_item_update(old_it);
                 break;
             case NREAD_CAS:
@@ -1545,6 +1550,7 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
                     // it and old_it may belong to different classes.
                     // I'm updating the stats for the one that's getting pushed out
                     pthread_mutex_lock(&c->thread->stats.mutex);
+    		    FFI_schedule_next();
                     c->thread->stats.slab_stats[ITEM_clsid(old_it)].cas_hits++;
                     pthread_mutex_unlock(&c->thread->stats.mutex);
                     do_store = true;
@@ -1553,19 +1559,26 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
                     // the current item's CAS.
                     // This replaces the value, but should preserve TTL, and stale
                     // item marker bit + token sent if exists.
+    		    FFI_schedule_next();
                     it->exptime = old_it->exptime;
+    		    FFI_schedule_next();
                     it->it_flags |= ITEM_STALE;
+
+    		    FFI_schedule_next();
                     if (old_it->it_flags & ITEM_TOKEN_SENT) {
+    			FFI_schedule_next();
                         it->it_flags |= ITEM_TOKEN_SENT;
                     }
 
                     pthread_mutex_lock(&c->thread->stats.mutex);
+    		    FFI_schedule_next();
                     c->thread->stats.slab_stats[ITEM_clsid(old_it)].cas_hits++;
                     pthread_mutex_unlock(&c->thread->stats.mutex);
                     do_store = true;
                 } else {
                     // NONE or BADVAL are the same for CAS cmd
                     pthread_mutex_lock(&c->thread->stats.mutex);
+    		    FFI_schedule_next();
                     c->thread->stats.slab_stats[ITEM_clsid(old_it)].cas_badval++;
                     pthread_mutex_unlock(&c->thread->stats.mutex);
 
@@ -1591,19 +1604,25 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
                 }
 #endif
                 /* we have it and old_it here - alloc memory to hold both */
+    		FFI_schedule_next();
                 FLAGS_CONV(old_it, flags);
+    		
+		FFI_schedule_next();
                 new_it = do_item_alloc(key, it->nkey, flags, old_it->exptime, it->nbytes + old_it->nbytes - 2 /* CRLF */);
 
                 // OOM trying to copy.
+    		FFI_schedule_next();
                 if (new_it == NULL)
                     break;
                 /* copy data from it and old_it to new_it */
+    		FFI_schedule_next();
                 if (_store_item_copy_data(comm, old_it, new_it, it) == -1) {
                     // failed data copy
                     break;
                 } else {
                     // refcount of new_it is 1 here. will end up 2 after link.
                     // it's original ref is managed outside of this function
+    		    FFI_schedule_next();
                     it = new_it;
                     do_store = true;
                 }
@@ -1615,18 +1634,24 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
         }
 
         if (do_store) {
+    	    FFI_schedule_next();
             STORAGE_delete(c->thread->storage, old_it);
+
+    	    FFI_schedule_next();
             item_replace(old_it, it, hv);
             stored = STORED;
         }
 
+        FFI_schedule_next();
         do_item_remove(old_it);         /* release our reference */
         if (new_it != NULL) {
             // append/prepend end up with an extra reference for new_it.
+    	    FFI_schedule_next();
             do_item_remove(new_it);
         }
     } else {
         /* No pre-existing item to replace or compare to. */
+        FFI_schedule_next();
         if (ITEM_get_cas(it) != 0) {
             /* Asked for a CAS match but nothing to compare it to. */
             cas_res = CAS_MISS;
@@ -1641,6 +1666,7 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
                 // LRU expired
                 stored = NOT_FOUND;
                 pthread_mutex_lock(&c->thread->stats.mutex);
+    		FFI_schedule_next();
                 c->thread->stats.cas_misses++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
                 break;
@@ -1652,12 +1678,14 @@ enum store_item_type do_store_item(item *it, int comm, conn *c, const uint32_t h
         }
 
         if (do_store) {
+    	    FFI_schedule_next();
             do_item_link(it, hv);
             stored = STORED;
         }
     }
 
     if (stored == STORED) {
+        FFI_schedule_next();
         c->cas = ITEM_get_cas(it);
     }
     LOGGER_LOG(c->thread->l, LOG_MUTATIONS, LOGGER_ITEM_STORE, NULL,

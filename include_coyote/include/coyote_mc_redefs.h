@@ -13,6 +13,8 @@ pthread_mutex_t logger_atomics_mutex;
 int watcher_count;
 static uint64_t logger_gid;
 
+void logger_watcher_reset();
+
 void reset_logger_globals(){
 
     logger_stack_head = NULL;
@@ -23,6 +25,7 @@ void reset_logger_globals(){
     FFI_pthread_mutex_lazy_init(&logger_atomics_mutex);
     watcher_count = 0;
     logger_gid = 0;
+    logger_watcher_reset();
 }
 #endif /*IN_LOGGER_FILE*/
 
@@ -56,11 +59,17 @@ void reset_memcached_globals(){
 
 #ifdef IN_THREAD_FILE
 
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+
 pthread_mutex_t atomics_mutex;
 pthread_mutex_t conn_lock;
 static int init_count;
 static int last_thread;
 static pthread_mutex_t stats_lock;
+static uint32_t item_lock_count;
+unsigned int item_lock_hashpower;
+
+void reset_worker_thread(void);
 
 void reset_thread_globals(){
 
@@ -69,6 +78,9 @@ void reset_thread_globals(){
 	FFI_pthread_mutex_lazy_init(&stats_lock);
 	init_count = 0;
 	last_thread = -1;
+	item_lock_count = 0;
+	item_lock_hashpower = 0;
+	reset_worker_thread();
 }
 #endif /*IN_THREAD_FILE*/
 
@@ -84,6 +96,15 @@ static pthread_mutex_t maintenance_lock;
 static item** old_hashtable;
 static item** primary_hashtable;
 
+// For storing hash values of the keys
+static uint32_t *hv_vector = NULL;
+static int hv_counter = 0;
+
+#define COYOTE_CONTROLLED
+
+void FFI_store_hv(uint32_t HashValue);
+uint32_t FFI_get_item_hash(item* it);
+
 void reset_assoc_globals(){
 
 	do_run_maintenance_thread = 1;
@@ -95,6 +116,25 @@ void reset_assoc_globals(){
     FFI_pthread_mutex_lazy_init(&maintenance_lock);
     old_hashtable = NULL;
     primary_hashtable = NULL;
+
+    if(!hv_vector){
+    	free(hv_vector);
+    	hv_vector = NULL;
+    }
+    hv_counter = 0;
+}
+
+void FFI_store_hv(uint32_t HashValue){
+
+	assert(hv_counter < 64 && "Total keys stored is more than 64");
+
+	if(hv_vector == NULL){
+		hv_vector = (uint32_t*)malloc(sizeof(uint32_t)*64);
+		hv_counter = 0;
+	}
+
+	hv_vector[hv_counter] = HashValue;
+	hv_counter++;
 }
 #endif /*IN_ASSOC_FILE*/
 
@@ -134,6 +174,7 @@ static item *tails[256];
 static item *heads[256];
 
 static void reset_lru_bumps(void);
+
 void reset_items_globals(){
 
 	FFI_pthread_mutex_lazy_init(&bump_buf_lock);
@@ -170,6 +211,11 @@ static pthread_mutex_t slabs_lock;
 static pthread_mutex_t slabs_rebalance_lock;
 static void *storage;
 
+#pragma GCC diagnostic ignored "-Wredundant-decls"
+static int power_largest;
+
+static void reset_slab_classes(void);
+
 void reset_slabs_globals(){
 
 	do_run_slab_rebalance_thread = 1;
@@ -179,10 +225,12 @@ void reset_slabs_globals(){
 	mem_limit = 0;
 	mem_limit_reached = false;
 	mem_malloced = 0;
+	power_largest = 0;
 	FFI_pthread_cond_lazy_init(&slab_rebalance_cond);
 	FFI_pthread_mutex_lazy_init(&slabs_lock);
 	FFI_pthread_mutex_lazy_init(&slabs_rebalance_lock);
 	storage = NULL;
+	reset_slab_classes();
 }
 #endif /*IN_SLABS_FILE*/
 
@@ -236,6 +284,7 @@ void reset_slabs_globals(){
 #define fcntl(x, ...) FFI_fcntl(x, __VA_ARGS__)
 #define pipe(x) FFI_pipe(x)
 #define poll(x, y, z) FFI_poll(x, y, z)
+#define close(x) FFI_close(x)
 
 #ifndef IOV_MAX
 # define IOV_MAX 1024
@@ -246,7 +295,7 @@ void reset_slabs_globals(){
 #endif
 #endif
 
-// We doen't yet support accept4() and get_opt_long() sys call while testing
+// We doen't yet support accept4() and get_opt_long() sys call while coyote testing
 #undef HAVE_ACCEPT4
 #undef HAVE_GETOPT_LONG
 
@@ -261,6 +310,9 @@ void reset_slabs_globals(){
 #define calloc(x, y) FFI_calloc(x, y)
 #define realloc(x, y) FFI_realloc(x, y)
 #define free(x) FFI_free(x)
+
+// Temporarily disable perror(). Ideally, we should not disable it as it can hide some error messages.
+#define perror(x)
 
 // #define COYOTE_2019_BUGS // For introducing data race bugs
 

@@ -42,12 +42,16 @@ struct conn{
 		return a;
 	}
 
-	void set_key(const char* key, const char* val, int expr = 0, bool isReply = false){
+	void set_key(const char* key, const char* val, int expr = 0, bool isReply = false, unsigned int size = 0){
 
 		string base("set ");
 		base = base + char_to_string(key);
 		base = base + char_to_string(" 01 ") + to_string(expr);
-		base = base + char_to_string(" ") + to_string(strlen(val));
+
+		if(size)
+			base = base + char_to_string(" ") + to_string(size);
+		else
+			base = base + char_to_string(" ") + to_string(strlen(val));
 
 		if(isReply)
 			base = base + char_to_string("\r\n") + char_to_string(val);
@@ -126,6 +130,15 @@ struct conn{
 
 		add_kv_cmd(base); // Add the command
 
+		// In case of stats sizes_disable, just assert the final vala nd return
+		if(strcmp(type, "sizes_disable") == 0){
+			string resp(param);
+			resp = resp + char_to_string(" ");
+			resp = resp + val;
+			set_expected_kv_resp(char_to_string("generic"), resp);
+			return;
+		}
+
 		// Command to assert the result
 		{
 
@@ -178,6 +191,7 @@ struct conn{
 	string get_next_cmd(){
 
 		string retval;
+		assert(kv_cmd != NULL && "Why will this ever happen?");
 
 		if(kv_cmd->size()){
 
@@ -189,6 +203,10 @@ struct conn{
 			num_conn_registered++;
 			retval = string("quit\r\n");
 		}
+
+		// When ever a connection send a watch command, it is equivalent to dead
+		if(retval == string("watch\n"))
+			num_conn_registered++;
 
 		return retval;
 	}
@@ -215,7 +233,10 @@ struct conn{
 
 		conn_id = socket_counter++;
 		kv_response = new vector<string>();
+
 		kv_cmd = new vector<string>();
+		assert(kv_cmd != NULL);
+
 		expected_response = new vector< pair<string, string>* >();
 		output_counter = 0;
 		input_counter = 0;

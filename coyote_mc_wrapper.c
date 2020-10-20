@@ -20,7 +20,7 @@ ssize_t CT_socket_sendto(int, void*, size_t, int, struct sockaddr*,
        socklen_t*);
 
 // Main function of the test case
-int CT_main( int (*run_iteration)(int, char**), void (*reset_gloabs)(void), int argc, char** argv );
+int CT_main( int (*run_iteration)(int, char**), void (*reset_gloabs)(void), uint32_t (*get_prog_state)(void), int argc, char** argv );
 
 // Temporary data structure used for passing parameteres to pthread_create
 typedef struct pthread_create_params{
@@ -36,6 +36,7 @@ void *coyote_new_thread_wrapper(void *p){
 
 	pthread_c_params* param = (pthread_c_params*)p;
 
+	FFI_schedule_next();
 	((param->start_routine))(param->arg);
 
 	FFI_complete_operation((long unsigned)pthread_self());
@@ -50,6 +51,7 @@ int FFI_pthread_create(void *tid, void *attr, void *(*start_routine) (void *), v
 	// though they use only defaults attributes
 	// assert(attr == NULL && "We don't yet support using custom attributes");
 
+	FFI_schedule_next();
 	pthread_c_params *p = (pthread_c_params *)malloc(sizeof(pthread_c_params));
 	p->start_routine = start_routine;
 	p->arg = arguments;
@@ -99,11 +101,13 @@ int FFI_pthread_join(pthread_t tid, void* arg){
 
 static int *stop_main = NULL;
 void FFI_register_main_stop(int *flag){
+	FFI_schedule_next();
 	stop_main = flag;
 }
 
 int FFI_accept(int sfd, void* addr, void* addrlen){
 
+	FFI_schedule_next();
 	int retval = CT_new_socket();
 
 	if(retval < 0){
@@ -119,6 +123,7 @@ int FFI_accept(int sfd, void* addr, void* addrlen){
 // Dummy connection!
 int FFI_getpeername(int sfd, void* addr, void* addrlen){
 
+	FFI_schedule_next();
 	struct sockaddr_in6 *sockaddr = (struct sockaddr_in6 *)addr;
 	sockaddr->sin6_family = AF_INET;
     sockaddr->sin6_port = 8080;
@@ -129,32 +134,45 @@ int FFI_getpeername(int sfd, void* addr, void* addrlen){
     return 0;
 }
 
+// 1-D array containing FDs of both the ends of a pipe
 int *global_pipes = NULL;
-static int FFI_pipe_counter = 0;
+// Used for closing all the open pipes
+static int FFI_pipe_max = 0;
 
 int FFI_pipe(int pipes[2]){
 
 	int retval = pipe(pipes);
+	FFI_schedule_next();
 
-	if(FFI_pipe_counter == 0){
+	if(global_pipes == NULL){
 		// There can be at max 1000 pipes
 		global_pipes = (int*)malloc(sizeof(int)*1000);
-		memset(global_pipes, -1, 1000);
 
-		FFI_pipe_counter++;
+		// Set default values
+		memset(global_pipes, -1, 1000);
+		FFI_pipe_max = 0;
 	}
 
 	assert(global_pipes[ pipes[1] ] == -1 && "2 pipes with same fds?");
 	global_pipes[ pipes[1] ] = pipes[0];
 
+	// Store the max of FFI_pipe_max and pipes[1]
+	FFI_pipe_max = (FFI_pipe_max >= pipes[1])?FFI_pipe_max:pipes[1];
+
 	return retval;
+}
+
+int FFI_close(int fd){
+
+	// Don't put a schedule_next here! This function will be called after detaching the client
+	// FFI_schedule_next();
+	return close(fd);
 }
 
 // No need to wait on a socket
 int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout){
 
 	FFI_schedule_next();
-
 	fds->revents = POLLOUT;
 
 	return 1;
@@ -162,7 +180,7 @@ int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout){
 
 ssize_t FFI_write(int sfd, const void* buff, size_t count){
 
-	FFI_clock_handler();
+	//FFI_clock_handler();
 	ssize_t retval = -1;
 	FFI_schedule_next();
 
@@ -199,19 +217,18 @@ ssize_t FFI_write(int sfd, const void* buff, size_t count){
 ssize_t FFI_sendmsg(int sfd, struct msghdr *msg, int flags){
 
 	FFI_schedule_next();
-	FFI_clock_handler();
-
     return CT_socket_recvmsg(sfd, msg, flags);
 }
 
 int FFI_fcntl(int fd, int cmd, ...){
+
+	FFI_schedule_next();
 	return 1;
 }
 
 ssize_t FFI_read(int fd, void* buff, int count){
 
 	FFI_schedule_next();
-	FFI_clock_handler();
 
 	if(!CT_is_socket(fd)){
 
@@ -231,6 +248,30 @@ ssize_t FFI_recvfrom(int socket, void* buffer, size_t length,
 	return CT_socket_sendto(socket, buffer, length, flags, address, addr_len);
 }
 
+void FFI_reset_coyote_mc_wrapper(void){
+
+	// Close all the open pipes
+	for(int i = 0; i <= FFI_pipe_max; i++){
+
+		if(global_pipes[i] == -1) continue;
+
+		FFI_close(global_pipes[i]);
+		FFI_close(i);
+	}
+
+	free(global_pipes);
+	global_pipes = NULL;
+	FFI_pipe_max = 0;
+
+	stats_state_read = true;
+	stats_state_write = true;
+}
+
+uint32_t get_program_state(void){
+
+	return FFI_assoc_hash();
+}
+
 void reset_all_globals(){
 
 	reset_logger_globals();
@@ -242,12 +283,14 @@ void reset_all_globals(){
 	reset_slabs_globals();
 	// For resetting libevent mock DS
 	FFI_event_reset_all();
+	// Now, reset the globals in coyote_mc_wrapper
+	FFI_reset_coyote_mc_wrapper();
 }
 
 // Delegate the functionality to the test main method
 int main(int argc, char **argv){
 
- 	return CT_main( &run_coyote_iteration, &reset_all_globals, argc, argv );
+ 	return CT_main( &run_coyote_iteration, &reset_all_globals, &get_program_state, argc, argv );
 }
 
 #endif /* COYOTE_MC_WRAP */

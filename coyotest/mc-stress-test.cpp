@@ -1,13 +1,15 @@
 // Compile this as: g++ -std=c++11 -shared -fPIC -I./ -g -o libcoyotest.so test_basic_store_get.cpp -g -L/home/udit/memcached_2020/memcached/include_coyote/include -lcoyote_c_ffi -lcoyote
 #include <test_template.h>
 #include <regex>
+#include <fstream>
+#include <iostream>
 
 using namespace std;
 
 vector<conn*>* global_conns;
 
 // To disable printf statements
-// #define printf(x, ...)
+#define printf(x, ...)
 
 char* get_key_name(int i, char prefix = ' '){
 
@@ -18,14 +20,14 @@ char* get_key_name(int i, char prefix = ' '){
 		string st("key_");
 		st = st + to_string(i);
 
-		char* retval = (char*)malloc( sizeof(char) * (st.length() + 10));
+		char* retval = (char*)FFI_malloc( sizeof(char) * (st.length() + 10));
 		strcpy(retval, st.c_str());
 
 		return retval;
 	}
 	else{
 
-		char* pre = (char*)malloc(sizeof(char)*5);
+		char* pre = (char*)FFI_malloc(sizeof(char)*5);
 		pre[0] = prefix;
 		pre[1] = '\0';
 
@@ -33,7 +35,7 @@ char* get_key_name(int i, char prefix = ' '){
 		string st("key_");
 		st = prefix + st + to_string(i);
 
-		char* retval = (char*)malloc( sizeof(char) * (st.length() + 10));
+		char* retval = (char*)FFI_malloc( sizeof(char) * (st.length() + 10));
 		strcpy(retval, st.c_str());
 
 		return retval;
@@ -223,7 +225,21 @@ ssize_t parse_lru_crawler_metadump_response(char* buff, string value){
 	return retval;
 }
 
-void set_workload(conn* c){
+// Need 21 connections
+void set_workload_2019_bugs(conn* obj){
+
+	// For bug in watcher_add function
+	obj->add_kv_cmd("watch\n");
+	obj->set_expected_kv_resp(obj->char_to_string("watch"), obj->char_to_string("OK\r\n"));
+
+	obj->set_expected_kv_resp(obj->char_to_string("watch"), obj->char_to_string("102000"));
+
+	// For bug in item_cachedump
+	obj->add_kv_cmd("item cachedump\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+}
+
+void set_random_workload(conn* c){
 
 	// Random number between 1 and 50
 	int max = rand() % 50 + 1;
@@ -268,6 +284,7 @@ void set_workload(conn* c){
 
         char* key = get_key_name(i);
         c->get_key(key);
+        c->set_expected_kv_resp("get", "\r\n");
     }
 }
 
@@ -306,9 +323,9 @@ void set_workload_lru(conn* obj){
 
 		string lru_crawler1("lru_crawler crawl 1\r\n");
 
-		for(int i =0; i < 2000; i++){
+		for(int i =0; i < 3000; i++){
 			obj->add_kv_cmd(lru_crawler1);
-			obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("\r\n") );
+			obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("OK\r\n") );
 		}
 
 		obj->get_mem_stats_and_assert("slabs", "1:used_chunks", to_string(6));
@@ -364,7 +381,7 @@ void set_workload_lru(conn* obj){
 void set_workload_extstore(conn* obj){
 
 	// Generate a latge workload
-	char* long_val = (char*)malloc(sizeof(char) * 1000 * 5);
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1000 * 5);
 	memset(long_val, 'C', sizeof(char) * 1000 * 5); // Store a char per byte
 
 	for(int i = 1; i <= 2; i++){
@@ -406,47 +423,50 @@ void set_workload_slab_rebalance(conn* obj){
 	// Make sure that slab_reassign option is set
 	obj->get_mem_stats_and_assert("settings", "slab_reassign", obj->char_to_string("yes"));
 
-	// This hsould consume the entire cache. Slab id is 23
-	char* long_val = (char*)malloc(sizeof(char) * 1024 * 12);
+	// This should consume the entire cache. Slab id is 23
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1024 * 12);
 	memset(long_val, 'x', sizeof(char) * 1024 * 12); // Store a char per byte
+	long_val[(1024*12) - 1] = '\0';
 
-	for(int i = 1; i <= 150; i++){
+	for(int i = 1; i <= 75; i++){
 
 		char* key = get_key_name(i);
-		obj->set_key(key, long_val, 0, true); // For infinite time
+		obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
 		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
 	}
 
 	// This should take 1/4 of the total cache. Slab id: 19
-	char* small_val = (char*)malloc(sizeof(char) * 1024 * 5);
+	char* small_val = (char*)FFI_malloc(sizeof(char) * 1024 * 5);
 	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+	small_val[(5*1024) - 1] = '\0';
 
 	for(int i = 1; i <= 50; i++){
 
 		char* key = get_key_name(i);
-		obj->set_key(key, small_val, 0, true); // For infinite time
+		obj->set_key(key, small_val, 0, true, 5*1024 - 1); // For infinite time
 		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
 	}
 
 	// TODO: Use RegEx here
 	// These should fail!
-	//obj->get_mem_stats_and_assert("items", "items:19:evicted", obj->char_to_string(""), true);
+	// obj->get_mem_stats_and_assert("items", "items", obj->char_to_string(""));
 	//obj->get_stats_and_eval_regex("items", "*items:19:evicted [1-]");
 	//obj->get_mem_stats_and_assert("items", "items:25:evicted", to_string(0));
 
 	obj->add_kv_cmd("slabs reassign invalid1 invalid2\r\n");
 	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("CLIENT_ERROR bad command line format\r\n"));
 
-	obj->add_kv_cmd("slabs reassign 23 19\r\n");
-	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
-
-	// General
-	obj->get_mem_stats_and_assert("gen", "slabs_moved", to_string(1));
-
+	// Move pages from any valid slab class to slab 23
 	obj->add_kv_cmd("slabs reassign 23 19\r\n");
 	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
 
-	obj->get_mem_stats_and_assert("gen", "slabs_moved", to_string(1));
+	// General
+	//obj->get_mem_stats_and_assert("gen", "slabs_moved", to_string(1));
+
+	obj->add_kv_cmd("slabs reassign 19 23\r\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+
+	//obj->get_mem_stats_and_assert("gen", "slabs_moved", to_string(1));
 }
 
 void set_workload_logger(conn* obj){
@@ -467,19 +487,18 @@ void set_workload_logger(conn* obj){
 		obj->get_and_assert_key("foo", "END");
 
 		// Have big key names
-		for(int i = 100000; i <= 102010; i++){
+		for(int i = 100000; i <= 100100; i++){
 
 			char* key = get_key_name(i);
 			obj->get_and_assert_key(key, "END");
 		}
-
 	}
 }
 
 void set_large_workload(conn* obj){
 
 	// Each value is of 4 KB
-	char* long_val = (char*)malloc(sizeof(char) * 1000 * 4);
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1000 * 4);
 	memset(long_val, '1', sizeof(char) * 1000 * 4);
 
 	for(int i = 1; i <= 500; i++){
@@ -553,7 +572,113 @@ void set_workload_meta_cmds(conn* obj){
 
     obj->add_kv_cmd("ma mi N0 C99999 v\r\n");
     obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(EX)(.*)\r\n"));
+}
 
+void set_workload_generic_testcase(conn* obj){
+
+	static int prev_conn_id = obj->conn_id;
+
+	// Worker connection
+	obj->get_and_assert_key("foo", "END");
+
+	obj->add_kv_cmd("ma mo\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(.*)\r\n"));
+
+    obj->add_kv_cmd("ma mo D1\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(.*)\r\n"));
+
+    obj->add_kv_cmd("set mo 0 0 1\r\n1\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+
+    obj->add_kv_cmd("ma key1 N90\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(OK)(.*)\r\n"));
+
+    obj->add_kv_cmd("mg key1 s t v Ofoo k\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("((VA 1[ ])(s[0-9][ ])(t(([1-8][0-9])|90)[ ])(Ofoo[ ])(.*)\r\n)|(EN(.*)\r\n)" ));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(.*)\r\n"));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(.*)\r\n"));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t D30\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(.*)\r\n"));
+
+    obj->add_kv_cmd("ma mi N90 J13 v t MD D30\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("(VA)(.*)\r\n(.*)\r\n"));
+
+    obj->add_kv_cmd("ma mi N0 C99999 v\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("meta"), obj->char_to_string("((.*)\r\n(.*)\r\n)|((.*)\r\n)"));
+
+    obj->add_kv_cmd("flush_all\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+    set_workload_slab_rebalance(obj);
+
+    obj->add_kv_cmd("flush_all\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+    set_random_workload(obj);
+
+    obj->add_kv_cmd("flush_all\r\n");
+    obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+    //set_workload_lru(obj);
+    //set_workload_extstore(obj);
+    //TODO: Test misbehave command
+}
+
+/*
+* a_1 a_2 b_1 b_2
+* a_1 b_1 a_2 b_2
+* a_1 b_1 b_2 a_2
+* b_1 b_2 a_1 a_2
+* b_1 a_1 b_2 a_2
+* b_1 a_1 a_2 b_2
+*/
+void set_coverage_workload(conn* c){
+
+	// 2 threads, trying to insert and get 2 unique, KV pairs
+	// Random number between 1 and 2
+	int max = 2;
+
+    // Each value is of 4 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 4 * 1000);
+	memset(long_val, '1', sizeof(char) * 4 * 1000);
+	long_val[4000 - 1] = '\0';
+
+	// Set KV pair
+    for (int i = 1; i <= max; i++) {
+
+        char* key = get_key_name(i * c->conn_id);
+        c->set_key(key, long_val, 0, true);
+        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    }
+
+    /*
+    // Get KV Pair
+    for (int i = 1; i <= max; i++) {
+
+        char* key = get_key_name(i * c->conn_id);
+        c->get_and_assert_key(key, long_val);
+    }
+    */
+}
+
+void reproduce_stats_sizes_bug(conn* c){
+
+	static int cid = c->conn_id;
+
+	if(cid == c->conn_id){
+
+		char* key = get_key_name(1);
+		c->set_key(key, key, 0, true);
+        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+	}else{
+
+		c->get_mem_stats_and_assert("sizes_disable","STAT sizes_status", c->char_to_string("disabled\r\n"));
+	}
 }
 
 void init_sockets(){
@@ -570,7 +695,10 @@ void init_sockets(){
 		//set_workload_extstore(new_con); // <<-- For testing extstore thread
 		//set_workload_slab_rebalance(new_con); // <<-- For slab rebalance thread
 		//set_workload_logger(new_con); // <<-- For testing logger thread
-		set_workload_meta_cmds(new_con); // <<-- For testing meta commands
+		//set_workload_meta_cmds(new_con); // <<-- For testing meta commands
+		//set_workload_generic_testcase(new_con); // <<-- For Generic test case
+		//set_coverage_workload(new_con); // <<-- For coverage test case
+		reproduce_stats_sizes_bug(new_con);
 		global_conns->push_back(new_con);
 	}
 }
@@ -586,6 +714,10 @@ void del_sockets(){
 	delete global_conns;
 	global_conns = NULL;
 	num_conn_registered = 0;
+
+	socket_counter = 200;
+	delete map_fd_to_conn;
+	map_fd_to_conn = NULL;
 }
 
 bool CT_is_socket(int fd){
@@ -606,6 +738,8 @@ ssize_t CT_socket_write(int fd, void* buff, int count){
 
 	// Convert string object to C strings and copy it info the buffer
 	//strcpy(msg, st.c_str());
+	//assert(strlen(st.c_str()) <= count);
+
 	memcpy(buff, st.c_str(), strlen(st.c_str()));
 
 	return strlen(st.c_str());
@@ -770,7 +904,6 @@ ssize_t CT_socket_recvmsg(int fd, struct msghdr *msg, int flags){
 	return strlen((char*)(msg->msg_iov->iov_base));
 }
 
-
 int CT_new_socket(){
 
 	static int i = 0;
@@ -797,11 +930,13 @@ int set_options(int argc, char** argv, char** new_argv){
 		memcpy(new_argv[i], argv[i], 500);
 	}
 
-	//char new_opt[4][30] = {"-m", "32", "-o", "no_modern"}; // <-- For Lru crawler testcase
+	char new_opt[8][500] = {"-m", "1", "-t", "2", "-I", "4096", "-o", "hashpower=12,slab_reassign,slab_chunk_max=1024,track_sizes"}; // <-- For Coverage
+	//char new_opt[6][30] = {"-m", "32", "-t", "2", "-o", "slab_reassign"}; // <-- Generic test case
+	//char new_opt[6][30] = {"-m", "32", "-o", "no_modern", "-t", "1"}; // <-- For Lru crawler testcase
 	//char new_opt[7][500] = {"-m", "64", "-U", "0", "-o", "ext_page_size=8,ext_wbuf_size=2,ext_threads=1,ext_io_depth=2,ext_item_size=512,ext_item_age=2,ext_recache_rate=10000,ext_max_frag=0.9,ext_path=/temp/extstore.1:64m,slab_automove=0,ext_compact_under=1"};
-	//char new_opt[6][100] = {"-m", "2", "-o", "slab_reassign"};
-	char new_opt[4][100] = {"-m", "60", "-o", "watcher_logbuf_size=8"};
-	int num_new_opt = 4;
+	//char new_opt[6][100] = {"-m", "2", "-o", "slab_reassign", "-t", "2"};
+	//char new_opt[4][100] = {"-m", "60", "-o", "watcher_logbuf_size=8"};
+	int num_new_opt = 8;
 
 	for(int j = 0; i < (argc + num_new_opt); i++, j++){
 
@@ -811,15 +946,72 @@ int set_options(int argc, char** argv, char** new_argv){
 	return argc + num_new_opt;
 }
 
+char file_name[200] = "/home/udit/memcached_2020/memcached/coyotest/memcached_coverage.txt";
+bool is_file_init = false;
+
+void store_to_file(int itr, int size){
+
+	if(is_file_init ==  false){
+		is_file_init = true;
+
+		// Don't check the error code
+		remove( file_name );
+
+		// create a file now
+		std::fstream file;
+		file.open( file_name, ios::out);
+		if(!file){
+			std::cout<<"File not created!! \n";
+		}
+		file<<"x,y"<<endl;
+		file.close();
+	}
+
+	std::ofstream file;
+	file.open( file_name, std::ios_base::app);
+	file<<itr<<","<<size<<endl;
+
+	file.flush();
+	file.close();
+}
+
+std::vector<uint32_t>* all_hv = NULL;
+void check_and_add(uint32_t hv, int itr){
+
+	if(all_hv == NULL){
+		all_hv = new std::vector<uint32_t>();
+	}
+
+	std::vector<uint32_t>::iterator it = std::find(all_hv->begin(), all_hv->end(), hv);
+
+	// If we havn't found this hv before, insert it!
+	if(it == all_hv->end()){
+		all_hv->push_back(hv);
+	}
+
+	int total_size = all_hv->size();
+	store_to_file(itr, total_size);
+}
+
+void print_and_clear_hvs(int total_iter){
+
+	assert(all_hv != NULL);
+
+	printf("Total states %lu found in %d iterations\n", all_hv->size(), total_iter);
+
+	delete all_hv;
+	all_hv = NULL;
+}
+
 // Allow printfs from main function
 #undef printf
 
 // Test main method
-int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), int argc, char** argv ){
+int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), uint32_t (get_program_state)(void), int argc, char** argv ){
 
-	FFI_create_scheduler_w_seed(1602651192494780357);
+	FFI_create_scheduler_w_seed(1602754210015981153);
 
-	int num_iter = 1;
+	int num_iter = 300;
 
 	char **new_argv = (char **)malloc(50 * sizeof(char *));
 	for(int i = 0; i < 50; i++){
@@ -842,13 +1034,17 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 		FFI_detach_scheduler();
 		FFI_scheduler_assert();
 
-		// Reset program state
+		uint32_t hash = get_program_state();
+		check_and_add(hash, j);
+		//printf("Hash of this iteration is %u \n", hash);
+
 		reset_all_globals(); // For resetting globals and libevent
 		FFI_free_all(); // For heap allocations
 		del_sockets(); // For resetting client connection sockets
 	}
 
 	FFI_delete_scheduler();
+	print_and_clear_hvs(num_iter);
 
 	for(int i = 0; i < 50; i++){
 		free(new_argv[i]);

@@ -42,6 +42,7 @@ int FFI_pipe(int[]);
 int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout);
 void FFI_register_clock_handler(void (*clk_handle)(int, short int, void*));
 void FFI_register_main_stop(int *flag);
+int FFI_close(int fd);
 
 // Its definition is in the mock_libevent library
 ssize_t FFI_event_write(int, const void*, size_t, int);
@@ -62,6 +63,11 @@ void reset_assoc_globals(void);
 void reset_crawler_globals(void);
 void reset_items_globals(void);
 void reset_slabs_globals(void);
+void FFI_reset_coyote_mc_wrapper(void);
+
+// For getting coverage info
+uint32_t get_program_state(void);
+uint32_t FFI_assoc_hash(void);
 
 #endif /* COYOTE_MC_WRAP */
 

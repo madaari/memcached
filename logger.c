@@ -47,6 +47,19 @@ logger_watcher *watchers[20];
 struct pollfd watchers_pollfds[20];
 int watcher_count = 0;
 
+#pragma GCC diagnostic ignored "-Wmissing-prototypes"
+void logger_watcher_reset(){
+
+    logger_stack_head = NULL;
+    logger_stack_tail = NULL;
+
+    for(int i = 0; i < 20; i++){
+        watchers[i] = NULL;
+    }
+
+    watcher_count = 0;
+}
+
 /* Should this go somewhere else? */
 static const entry_details default_entries[] = {
     [LOGGER_ASCII_CMD] = {LOGGER_TEXT_ENTRY, 512, LOG_RAWCMDS, "<%d %s"},
@@ -808,7 +821,11 @@ enum logger_add_watcher_ret logger_add_watcher(void *c, const int sfd, uint16_t 
     logger_watcher *w = NULL;
     pthread_mutex_lock(&logger_stack_lock);
     if (watcher_count >= WATCHER_LIMIT) {
+
+// This will cause a deadlock
+#ifndef COYOTE_2019_BUGS
         pthread_mutex_unlock(&logger_stack_lock);
+#endif
         return LOGGER_ADD_WATCHER_TOO_MANY;
     }
 

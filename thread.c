@@ -84,6 +84,10 @@ unsigned int item_lock_hashpower;
  */
 static LIBEVENT_THREAD *threads;
 
+void reset_worker_thread(){
+    threads = NULL;
+    cqi_freelist = NULL;
+}
 /*
  * Number of worker threads that have finished setting themselves up.
  */

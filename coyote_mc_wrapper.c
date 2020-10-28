@@ -10,6 +10,11 @@
 #include <stdio.h>
 #include <signal.h>
 
+#undef EXECUTION_COYOTE_CONTROLLED
+
+#ifndef EXECUTION_COYOTE_CONTROLLED
+#define FFI_schedule_next()
+#endif
 // Declarations of test methods. These methods should be implemented by the test case.
 bool CT_is_socket(int);
 ssize_t CT_socket_read(int, const void*, int);
@@ -20,7 +25,7 @@ ssize_t CT_socket_sendto(int, void*, size_t, int, struct sockaddr*,
        socklen_t*);
 
 // Main function of the test case
-int CT_main( int (*run_iteration)(int, char**), void (*reset_gloabs)(void), uint32_t (*get_prog_state)(void), int argc, char** argv );
+int CT_main( int (*run_iteration)(int, char**), void (*reset_gloabs)(void), uint64_t (*get_prog_state)(void), int argc, char** argv );
 
 // Temporary data structure used for passing parameteres to pthread_create
 typedef struct pthread_create_params{
@@ -101,17 +106,28 @@ int FFI_pthread_join(pthread_t tid, void* arg){
 
 static int *stop_main = NULL;
 void FFI_register_main_stop(int *flag){
-	FFI_schedule_next();
 	stop_main = flag;
 }
 
 int FFI_accept(int sfd, void* addr, void* addrlen){
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
 	FFI_schedule_next();
+#endif
 	int retval = CT_new_socket();
 
-	if(retval < 0){
+	// retval == 0 means no new connection available
+	while(retval == 0){
+		FFI_clock_handler();
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
+		FFI_schedule_next();
+#endif
+		retval = CT_new_socket();
+	}
+
+	// If the test is returning -1, means it wants to stop the server
+	if(retval < 0){
 		*stop_main = 2;
 		return retval;
 	}
@@ -123,13 +139,13 @@ int FFI_accept(int sfd, void* addr, void* addrlen){
 // Dummy connection!
 int FFI_getpeername(int sfd, void* addr, void* addrlen){
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
 	FFI_schedule_next();
+#endif
 	struct sockaddr_in6 *sockaddr = (struct sockaddr_in6 *)addr;
 	sockaddr->sin6_family = AF_INET;
     sockaddr->sin6_port = 8080;
     inet_pton(AF_INET, "192.0.2.33", &(sockaddr->sin6_addr));
-
-    FFI_schedule_next();
 
     return 0;
 }
@@ -180,7 +196,7 @@ int FFI_poll(struct pollfd *fds, nfds_t nfds, int timeout){
 
 ssize_t FFI_write(int sfd, const void* buff, size_t count){
 
-	//FFI_clock_handler();
+	FFI_clock_handler();
 	ssize_t retval = -1;
 	FFI_schedule_next();
 
@@ -229,7 +245,6 @@ int FFI_fcntl(int fd, int cmd, ...){
 ssize_t FFI_read(int fd, void* buff, int count){
 
 	FFI_schedule_next();
-
 	if(!CT_is_socket(fd)){
 
 		// You are trying to read from an event fd
@@ -267,9 +282,11 @@ void FFI_reset_coyote_mc_wrapper(void){
 	stats_state_write = true;
 }
 
-uint32_t get_program_state(void){
+uint64_t get_program_state(void){
 
-	return FFI_assoc_hash();
+	//return (FFI_assoc_hash() + get_slab_hash() + get_lru_hash()) % (1ULL<<60);
+	//return (FFI_assoc_hash(2) * get_lru_hash()) % (1ULL<<60);
+	return (FFI_assoc_hash(1) + get_slab_hash()) % (1ULL<<60);
 }
 
 void reset_all_globals(){

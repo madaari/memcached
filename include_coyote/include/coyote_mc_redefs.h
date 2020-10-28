@@ -103,7 +103,7 @@ static int hv_counter = 0;
 #define COYOTE_CONTROLLED
 
 void FFI_store_hv(uint32_t HashValue);
-uint32_t FFI_get_item_hash(item* it);
+uint64_t FFI_get_item_hash(item* it);
 
 void reset_assoc_globals(){
 
@@ -126,10 +126,10 @@ void reset_assoc_globals(){
 
 void FFI_store_hv(uint32_t HashValue){
 
-	assert(hv_counter < 64 && "Total keys stored is more than 64");
+	assert(hv_counter < 4096 && "Total keys stored is more than 64");
 
 	if(hv_vector == NULL){
-		hv_vector = (uint32_t*)malloc(sizeof(uint32_t)*64);
+		hv_vector = (uint32_t*)malloc(sizeof(uint32_t)*4096);
 		hv_counter = 0;
 	}
 
@@ -236,6 +236,10 @@ void reset_slabs_globals(){
 
 #include <sys/socket.h>
 
+//#define EXECUTION_COYOTE_CONTROLLED 1
+#undef EXECUTION_COYOTE_CONTROLLED
+
+#ifdef EXECUTION_COYOTE_CONTROLLED
 // pthread APIs
 #define pthread_mutex_init(x, y) FFI_pthread_mutex_init(x, y)
 #define pthread_mutex_lock(x) FFI_pthread_mutex_lock(x)
@@ -262,6 +266,7 @@ void reset_slabs_globals(){
 #define pthread_create(x, y, z, a) FFI_pthread_create(x, y, z, a)
 #define pthread_join(x, y) FFI_pthread_join(x, y)
 
+#endif /*EXECUTION_COYOTE_CONTROLLED*/
 /*********************************************** LibEvent APIs **********************************************/
 
 #define event_base_loop(x, y) FFI_event_base_loop(x, y)
@@ -301,9 +306,11 @@ void reset_slabs_globals(){
 
 #define main(x, y) run_coyote_iteration(x, y)
 
-#define usleep(x) {usleep(0); FFI_schedule_next();}
+#ifdef EXECUTION_COYOTE_CONTROLLED
+	#define usleep(x) {usleep(0); FFI_schedule_next();}
+#endif
 
-#define setbuf(x, y) { setbuf(x, y); FFI_register_clock_handler(clock_handler); FFI_register_main_stop(&stop_main_loop);}
+#define setbuf(x, y) { setbuf(x, y); FFI_register_clock_handler(clock_handler); FFI_register_main_stop(&stop_main_loop); FFI_schedule_next();}
 
 // Intercept all the heap allocators to release heap after every iteration
 #define malloc(x) FFI_malloc(x)
@@ -311,8 +318,15 @@ void reset_slabs_globals(){
 #define realloc(x, y) FFI_realloc(x, y)
 #define free(x) FFI_free(x)
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
 // Temporarily disable perror(). Ideally, we should not disable it as it can hide some error messages.
 #define perror(x)
+#endif
+
+// Remove schedule nexts if execution is not being controlled
+#ifndef EXECUTION_COYOTE_CONTROLLED
+	#define FFI_schedule_next()
+#endif
 
 // #define COYOTE_2019_BUGS // For introducing data race bugs
 

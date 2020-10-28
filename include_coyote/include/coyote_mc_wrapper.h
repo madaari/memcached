@@ -66,8 +66,11 @@ void reset_slabs_globals(void);
 void FFI_reset_coyote_mc_wrapper(void);
 
 // For getting coverage info
-uint32_t get_program_state(void);
-uint32_t FFI_assoc_hash(void);
+uint64_t get_program_state(void);
+uint64_t FFI_assoc_hash(int);
+uint64_t get_slab_hash(void);
+uint64_t get_lru_hash(void);
+uint64_t FFI_assoc_hash_item_selective(int);
 
 #endif /* COYOTE_MC_WRAP */
 

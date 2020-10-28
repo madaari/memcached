@@ -75,6 +75,17 @@ struct conn{
 		add_kv_cmd(base);
 	}
 
+	void delete_key(const char* key, bool reply = true){
+
+		string base("delete ");
+		base = base + char_to_string(key);
+		if(!reply)
+			base = base + char_to_string(" noreply");
+		base = base + char_to_string("\r\n");
+
+		add_kv_cmd(base);
+	}
+
 	void incr_key(const char* key, const int val){
 
 		string base("incr ");
@@ -156,15 +167,6 @@ struct conn{
 
 			set_expected_kv_resp(resp, resp1);
 		}
-	}
-
-	void delete_key(const char* key){
-
-		string base("delete ");
-		base = base + char_to_string(key);
-		base = base + char_to_string(" noreply\r\n");
-
-		add_kv_cmd(base);
 	}
 
 	void get_and_assert_key(const char* key, const char* value){

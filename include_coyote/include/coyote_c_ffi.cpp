@@ -31,6 +31,9 @@ Scheduler* scheduler = NULL;
 // Use this flag to use PCT branch of Coyote Scheduler
 //#define USING_PCT_BRANCH 1
 
+// using DFSStrategy Branch
+// #define USING_DFS_STRATEGY 1
+
 /******************************************** CoyoteLock Start ******************************************/
 
 /* This class is intended to model a pthread mutex or a condition variable (condV)
@@ -212,6 +215,37 @@ void FFI_create_scheduler_pct(){
 
 #endif // USING_PCT_BRANCH
 
+#ifdef USING_DFS_STRATEGY
+
+// Create scheduler with the random strategy
+void FFI_create_scheduler_rand(){
+
+	// Udit: Assuming that we can have only one instance
+	// of Coyote scheduler
+	if(scheduler != NULL){
+		return;
+	}
+
+	std::string st = "RandomStrategy";
+	scheduler = new coyote::Scheduler(st);
+	assert(scheduler != NULL && "coyote::Scheduler() returned NULL!");
+}
+
+// Create scheduler with the dfs strategy
+void FFI_create_scheduler_dfs(){
+
+	// Udit: Assuming that we can have only one instance
+	// of Coyote scheduler
+	if(scheduler != NULL){
+		return;
+	}
+
+	std::string st = "DFSStrategy";
+	scheduler = new coyote::Scheduler(st);
+	assert(scheduler != NULL && "coyote::Scheduler() returned NULL!");
+}
+#endif
+
 void FFI_delete_scheduler(){
 
 	if(lazy_mutex_init_list != NULL){
@@ -357,6 +391,8 @@ void FFI_signal_resource_to_op(size_t id, size_t op_id){
 
 	assert(scheduler != NULL && "Wrong sequence of API calls. Create Coyote Scheduler first.");
 
+	// This function is not available in PCT Strategy branch
+	//assert(0);
 	ErrorCode e = scheduler->signal_resource(id, op_id);
 	assert(e == coyote::ErrorCode::Success && "FFI_signal_resource_to_op: failed");
 }
@@ -374,7 +410,7 @@ void FFI_schedule_next(){
 	assert(scheduler != NULL && "Wrong sequence of API calls. Create Coyote Scheduler first.");
 
 	num_cxt_switch++;
-	assert(num_cxt_switch < MAX_NUM_CXT_SWITCH && "Potential violation of the liveliness property.");
+	//assert(num_cxt_switch < MAX_NUM_CXT_SWITCH && "Potential violation of the liveliness property.");
 
 	ErrorCode e = scheduler->schedule_next();
 	assert(e == coyote::ErrorCode::Success && "FFI_schedule_next: failed");
@@ -449,6 +485,8 @@ void FFI_set_state_write(){
 // be a problem in our case.
 int FFI_pthread_mutex_init(void *ptr, void *mutex_attr){
 
+	FFI_schedule_next();
+
 #ifdef DEBUG_PTHREAD_API
 	printf("In FFI_pthread_mutex_init: recieved: %p \n", ptr);
 #endif
@@ -515,6 +553,7 @@ void check_and_init_mutex(void* ptr){
 
 int FFI_pthread_mutex_lock(void *ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_mutex_lock: Initialize the hash map first\n");
 
 	llu key = (llu)ptr;
@@ -553,6 +592,7 @@ int FFI_pthread_mutex_lock(void *ptr){
 
 int FFI_pthread_mutex_trylock(void *ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_mutex_trylock: Initialize the hash map first\n");
 
 	llu key = (llu)ptr;
@@ -587,6 +627,7 @@ int FFI_pthread_mutex_trylock(void *ptr){
 
 int FFI_pthread_mutex_is_lock(void *ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_mutex_is_lock: Initialize the hash map first\n");
 
 	llu key = (llu)ptr;
@@ -616,6 +657,7 @@ int FFI_pthread_mutex_is_lock(void *ptr){
 
 int FFI_pthread_mutex_unlock(void *ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_mutex_unlock: Initialize the hash map first\n");
 
 #ifdef DEBUG_PTHREAD_API
@@ -652,6 +694,7 @@ int FFI_pthread_mutex_unlock(void *ptr){
 
 int FFI_pthread_mutex_destroy(void *ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_mutex_destroy: Initialize the hash map first\n");
 
 	llu key = (llu)ptr;
@@ -681,6 +724,7 @@ int FFI_pthread_mutex_destroy(void *ptr){
 
 int FFI_pthread_cond_init(void* ptr, void* attr){
 
+	FFI_schedule_next();
 	llu key = (llu)ptr;
 
 	if(hash_map == NULL){
@@ -735,6 +779,9 @@ void check_and_init_cond(void *ptr){
 }
 
 int FFI_pthread_cond_wait(void* cond_var_ptr, void* mtx){
+
+	// Don't put a context switch here. There's a bug in our libevent modelling, which can cause deadlock
+	// FFI_schedule_next();
 
 #ifdef DEBUG_PTHREAD_API
 	printf("In FFI_pthread_cond_wait: with cond_var: %p and mutex is: %p \n", cond_var_ptr, mtx);
@@ -796,6 +843,7 @@ int FFI_pthread_cond_wait(void* cond_var_ptr, void* mtx){
 
 int FFI_pthread_cond_signal(void* ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_cond_signal: Initialize the hash map first\n");
 
 	llu cond_key = (llu)ptr;
@@ -840,6 +888,7 @@ int FFI_pthread_cond_signal(void* ptr){
 
 int FFI_pthread_cond_broadcast(void* ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_cond_broadcast: Initialize the hash map first\n");
 
 	llu cond_key = (llu)ptr;
@@ -887,6 +936,7 @@ int FFI_pthread_cond_broadcast(void* ptr){
 
 int FFI_pthread_cond_destroy(void* ptr){
 
+	FFI_schedule_next();
 	assert(hash_map != NULL && "FFI_pthread_cond_destroy: Initialize the hash map first\n");
 
 	llu cond_key = (llu)ptr;
@@ -916,19 +966,38 @@ int FFI_pthread_cond_destroy(void* ptr){
 
 #ifdef INTERCEPT_HEAP_ALLOCATORS
 
+#undef EXECUTION_COYOTE_CONTROLLED
+
+#ifndef EXECUTION_COYOTE_CONTROLLED
+	#include <pthread.h>
+
+	pthread_mutex_t alloc_lock = PTHREAD_MUTEX_INITIALIZER;
+	#define ALLOC_LOCK() pthread_mutex_lock(&alloc_lock)
+	#define ALLOC_UNLOCK() pthread_mutex_unlock(&alloc_lock)
+
+#else
+
+	#define ALLOC_LOCK()
+	#define ALLOC_UNLOCK()
+#endif
+
 std::vector<void*>* allocation_vector = NULL;
 
 void add_to_allocation_vector(void* ptr){
 
+	ALLOC_LOCK();
 	if(allocation_vector == NULL){
 		allocation_vector = new std::vector<void*>();
 	}
 	assert(allocation_vector != NULL && "Heap memory full; Not able to allocate");
 
 	allocation_vector->push_back(ptr);
+	ALLOC_UNLOCK();
 }
 
 void remove_from_allocation_vector(void* ptr){
+
+	ALLOC_LOCK();
 
 	assert(allocation_vector != NULL);
 
@@ -938,6 +1007,8 @@ void remove_from_allocation_vector(void* ptr){
 
 		allocation_vector->erase(it);
 	}
+
+	ALLOC_UNLOCK();
 }
 
 void clear_allocation_vector(){
@@ -961,6 +1032,9 @@ extern "C"{
 
 	void* FFI_malloc(size_t s){
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
+		//FFI_schedule_next();
+#endif
 		void* retval = malloc(s);
 		add_to_allocation_vector(retval);
 		return retval;
@@ -968,6 +1042,9 @@ extern "C"{
 
 	void* FFI_calloc(size_t a, size_t b){
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
+		//FFI_schedule_next();
+#endif
 		void* retval = calloc(a, b);
 		add_to_allocation_vector(retval);
 		return retval;
@@ -975,6 +1052,9 @@ extern "C"{
 
 	void* FFI_realloc(void* ptr, size_t s){
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
+		//FFI_schedule_next();
+#endif
 		remove_from_allocation_vector(ptr);
 
 		void* retval = realloc(ptr, s);
@@ -984,6 +1064,9 @@ extern "C"{
 
 	void FFI_free(void* ptr){
 
+#ifdef EXECUTION_COYOTE_CONTROLLED
+		//FFI_schedule_next();
+#endif
 		remove_from_allocation_vector(ptr);
 		free(ptr);
 	}

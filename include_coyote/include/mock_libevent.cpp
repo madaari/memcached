@@ -3,24 +3,50 @@
 #ifndef MOCKLIBEVENT
 #define MOCKLIBEVENT
 
-extern "C"{
-	void FFI_schedule_next();
-	void FFI_create_scheduler();
-	int FFI_pthread_mutex_init(void* mutex_ptr, void* attr);
-	int FFI_pthread_mutex_lock(void *ptr);
-	int FFI_pthread_mutex_unlock(void *ptr);
-	int FFI_pthread_cond_init(void* ptr, void* attr);
-	int FFI_pthread_cond_wait(void* cond, void* mutex);
-	int FFI_pthread_cond_signal(void* cond);
-	int FFI_pthread_cond_destroy(void* ptr);
-	int FFI_pthread_mutex_destroy(void* ptr);
-}
-
 #include <event.h>
 #include <map>
 #include <unistd.h>
 #include <assert.h>
 #include <queue>
+#include <pthread.h>
+
+#undef EXECUTION_COYOTE_CONTROLLED
+#ifndef EXECUTION_COYOTE_CONTROLLED
+
+	#define FFI_pthread_mutex_init(x, y) pthread_mutex_init(x,y)
+	#define FFI_pthread_mutex_lock(x) pthread_mutex_lock(x)
+	#define FFI_pthread_mutex_unlock(x) pthread_mutex_unlock(x)
+	#define FFI_pthread_cond_init(x, y) pthread_cond_init(x, y)
+	#define FFI_pthread_cond_wait(x, y) pthread_cond_wait(x, y)
+	#define FFI_pthread_cond_signal(x) pthread_cond_signal(x)
+	#define FFI_pthread_cond_destroy(x) pthread_cond_destroy(x)
+	#define FFI_pthread_mutex_destroy(x) pthread_mutex_destroy(x)
+	#define FFI_schedule_next()
+
+	// Insert locks at all access to the global maps and variables
+	pthread_mutex_t global_lock = PTHREAD_MUTEX_INITIALIZER;
+	#define MAP_LOCK() pthread_mutex_lock(&global_lock);
+	#define MAP_UNLOCK() pthread_mutex_unlock(&global_lock);
+
+#else
+
+	extern "C"{
+
+		void FFI_schedule_next();
+		void FFI_create_scheduler();
+		int FFI_pthread_mutex_init(void* mutex_ptr, void* attr);
+		int FFI_pthread_mutex_lock(void *ptr);
+		int FFI_pthread_mutex_unlock(void *ptr);
+		int FFI_pthread_cond_init(void* ptr, void* attr);
+		int FFI_pthread_cond_wait(void* cond, void* mutex);
+		int FFI_pthread_cond_signal(void* cond);
+		int FFI_pthread_cond_destroy(void* ptr);
+		int FFI_pthread_mutex_destroy(void* ptr);
+
+		#define MAP_UNLOCK()
+		#define MAP_LOCK()
+	}
+#endif
 
 static int count_event_set = 0;
 static void* dispatcher_event = NULL;
@@ -54,8 +80,8 @@ struct mocked_event{
 
 struct worker_locks{
 
-	int lock;
-	int cond;
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
 	bool is_lock;
 	bool restart;
 	bool is_signaled;
@@ -100,7 +126,9 @@ struct active_event{
 extern "C"{
 
 void FFI_register_clock_handler(void (*clk_handle)(int, short int, void*)){
+	MAP_LOCK();
 	clock_handler = clk_handle;
+	MAP_UNLOCK();
 }
 
 void FFI_clock_handler(){
@@ -109,9 +137,13 @@ void FFI_clock_handler(){
 
 void FFI_event_set(event* ev, int sfd, int flags, void (*event_handler)(int, short, void *), void *arg){
 
+	FFI_schedule_next();
+
 	// In case of a clock handler
 	if(sfd == -1)
 		return;
+
+	MAP_LOCK();
 
 	if (map_fd_to_event == NULL){
 		map_fd_to_event  = new std::map<int, void *>();
@@ -130,6 +162,7 @@ void FFI_event_set(event* ev, int sfd, int flags, void (*event_handler)(int, sho
 	rv = (map_event_to_mocked_event->insert({ev, m_ev})).second;
 	assert(rv && "Insertion to mock event map failed");
 
+	MAP_UNLOCK();
 	// Create a mock event, even if the input sfd is -1. Otherwise, event_del will throw an error.
 	//if(sfd == -1) return;
 
@@ -142,10 +175,15 @@ void FFI_event_set(event* ev, int sfd, int flags, void (*event_handler)(int, sho
 
 int FFI_event_add(struct event *ev, struct timeval *tv){
 
+	FFI_schedule_next();
 	return 0;
 }
 
 int FFI_event_base_set(struct event_base* base, struct event* ev){
+
+	FFI_schedule_next();
+
+	MAP_LOCK();
 
 	if(map_event_to_mocked_event->find(ev) != map_event_to_mocked_event->end()){
 
@@ -179,23 +217,28 @@ int FFI_event_base_set(struct event_base* base, struct event* ev){
 		assert(rv && " Unable to insert into map_eventbase_to_event");
 	}
 
+	MAP_UNLOCK();
 	//return event_base_set(base, ev);
 	return 0;
 }
 
 int FFI_event_del(event* ev){
 
+	FFI_schedule_next();
+
+	MAP_LOCK();
 	std::map<void*, void*>::iterator it = map_event_to_mocked_event->find(ev);
 
 	// This can happen in the case of clock handler
 	if(it == map_event_to_mocked_event->end()){
+		MAP_UNLOCK();
 		return 0;
 	}
 
 	mocked_event* m_ev = (mocked_event*)(it->second);
 
-	if(m_ev->sfd != -1)
-		printf("Deleting an event corresponding to: %d \n", m_ev->sfd);
+	//if(m_ev->sfd != -1)
+	//	printf("Deleting an event corresponding to: %d \n", m_ev->sfd);
 
 	std::map<int, void*>::iterator it2 = map_fd_to_event->find(m_ev->sfd);
 	assert(it2 != map_fd_to_event->end() && "Interesting! file descriptor not found");
@@ -204,6 +247,7 @@ int FFI_event_del(event* ev){
 	delete m_ev;
 	map_event_to_mocked_event->erase(it);
 
+	MAP_UNLOCK();
 	return 0;
 }
 
@@ -221,6 +265,7 @@ int FFI_event_base_loop(void* ev_base, int flags){
 	// Dispatcher thread. Flags = 1 means EVLOOP_ONCE!
 	if(flags == 1){
 
+		MAP_LOCK();
 		std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 		assert(it != map_eventbase_to_event->end() && "Couldn't find in event_base map");
 
@@ -228,6 +273,7 @@ int FFI_event_base_loop(void* ev_base, int flags){
 		assert(it1 != map_event_to_mocked_event->end());
 
 		mocked_event* m_ev = (mocked_event*)(it1->second);
+		MAP_UNLOCK();
 
 		FFI_schedule_next();
 		m_ev->callback_method(m_ev->sfd, m_ev->which, m_ev->args);
@@ -239,6 +285,7 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 	} else { /* Worker threads */
 
+		MAP_LOCK();
 		std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 		assert(it != map_eventbase_to_event->end());
 
@@ -247,6 +294,7 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 		worker_locks *wl_original = (worker_locks*)(it2->second);
 		worker_locks *wl = wl_original;
+		MAP_UNLOCK();
 
 		// If it is not restarted, wait for someone to signal me
 		if(!isRestarted){
@@ -268,6 +316,7 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 		while(wl->is_lock){
 
+			MAP_LOCK();
 			std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 			assert(it != map_eventbase_to_event->end());
 
@@ -275,15 +324,18 @@ int FFI_event_base_loop(void* ev_base, int flags){
 			assert(it2 != map_event_to_lock->end());
 
 			wl = (worker_locks*)(it2->second);
+			MAP_UNLOCK();
 
-			if(!(wl->is_lock)) break;
+			if(!(wl->is_lock)) {break;}
 
+			MAP_LOCK();
 			std::map<void*, void*>::iterator i3 = map_event_to_mocked_event->find(it->second);
 
 			// This event has terminated!
 			if(i3 != map_event_to_mocked_event->end()){
 
 				mocked_event* m_ev = (mocked_event*)(i3->second);
+				MAP_UNLOCK();
 
 				if(cache_m_ev.callback_method == NULL)
 					cache_m_ev = *m_ev;
@@ -294,17 +346,19 @@ int FFI_event_base_loop(void* ev_base, int flags){
 				//clock_handler(0, 0, 0);
 			}
 			else{
+
+				MAP_UNLOCK();
 				break;
 			}
 		}
 
-		if(!(wl->is_signaled)){
-			// For final registration
-			FFI_pthread_mutex_lock(&(wl_original->lock));
+		// For final registration
+		FFI_pthread_mutex_lock(&(wl_original->lock));
+		if(!(wl_original->is_signaled)){
 			FFI_pthread_cond_wait(&(wl_original->cond), &(wl_original->lock));
-			FFI_pthread_mutex_unlock(&(wl_original->lock));
 		}
-		wl->is_signaled = false;
+		FFI_pthread_mutex_unlock(&(wl_original->lock));
+		wl_original->is_signaled = false;
 
 		if(wl_original->restart != true)
 			return 0;
@@ -312,12 +366,14 @@ int FFI_event_base_loop(void* ev_base, int flags){
 		// If we want to restart
 		{
 
+			MAP_LOCK();
 			// First erase the iterator
 			std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 			if(it != map_eventbase_to_event->end()){
 				map_eventbase_to_event->erase(it);
 			}
 
+			MAP_UNLOCK();
 			cache_m_ev.callback_method(cache_m_ev.sfd, cache_m_ev.which, cache_m_ev.args);
 
 			// Now spin loop untill another thread re-inserts this eventbase in the map
@@ -335,6 +391,9 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 int FFI_event_base_loopexit(void* ev_base, void* args){
 
+		FFI_schedule_next();
+
+		MAP_LOCK();
 		std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 		assert(it != map_eventbase_to_event->end());
 
@@ -342,6 +401,7 @@ int FFI_event_base_loopexit(void* ev_base, void* args){
 		assert(it2 != map_event_to_lock->end());
 
 		worker_locks *wl = (worker_locks*)(it2->second);
+		MAP_UNLOCK();
 
 		wl->is_lock = false;
 		FFI_pthread_cond_signal(&(wl->cond));
@@ -351,12 +411,16 @@ int FFI_event_base_loopexit(void* ev_base, void* args){
 
 ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 
+	FFI_schedule_next();
+
+	MAP_LOCK();
 	std::map<int, void*>::iterator it = map_fd_to_event->find(fd);
 
 	if(sfd_pipe != -1){
 
 		it = map_fd_to_event->find(sfd_pipe);
 	}
+	MAP_UNLOCK();
 
 	// If this is not an event fd
 	if(it == map_fd_to_event->end()){
@@ -365,10 +429,12 @@ ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 
 	ssize_t retval = write(fd, buff, count);
 
+	MAP_LOCK();
 	std::map<void *, void *>::iterator it2 = map_event_to_lock->find(it->second);
 	assert(it2 != map_event_to_lock->end());
 
 	worker_locks* wl = (worker_locks*)(it2->second);
+	MAP_UNLOCK();
 
 	if(((char*)(buff))[0] == 'r'){
 		wl->restart = true;

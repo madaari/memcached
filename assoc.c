@@ -59,14 +59,15 @@ static bool expanding = false;
 static unsigned int expand_bucket = 0;
 
 #ifdef COYOTE_CONTROLLED
-uint32_t FFI_get_item_hash(item* it){
+uint64_t FFI_get_item_hash(item* it){
 
     // Make hash sensitive to size of key, value, slabs_clsid, refcount
-    uint32_t retval = 0;
-    //retval = ((it->nkey)*(3) + (it->nbytes)*(9)) % (1<<30);
-    retval = (retval + (it->slabs_clsid)*(27) + (it->refcount)*(81)) % (1<<30);
+    uint64_t retval = 0;
+    retval = (uint64_t)((it->nkey)*(3) + (it->nbytes)*(9)) % (1ULL<<60);
+    //retval = (retval + (it->slabs_clsid & ~(3<<6))*(27) + (it->refcount)*(243)) % (1ULL<<60);
+    //retval = (retval + (it->slabs_clsid & (3<<6))*(81)) % (1ULL<<60);
 
-    printf("Taking hash. For Key: %s, got refcount: %d, slabs_clsid: %d \n", ITEM_key(it), it->refcount, it->slabs_clsid);
+    printf("Taking hash. For Key: %s, got refcount: %d, slabs_clsid: %d \n", ITEM_key(it), it->refcount, it->slabs_clsid & ~(3<<6));
 
     char* k = ITEM_key(it);
     char* v = ITEM_data(it);
@@ -77,7 +78,7 @@ uint32_t FFI_get_item_hash(item* it){
     for(; i < key_len; i++){
         if(k[i] == '\0')
             break;
-        retval = (retval + k[i] * (1<<i)) % (1<<30);
+        retval = (uint64_t)(retval + k[i] * (1ULL<<i)) % (1ULL<<60);
     }
 
     // Calculate hash of first 8 bits of value
@@ -87,24 +88,18 @@ uint32_t FFI_get_item_hash(item* it){
 
         if(v[i] == '\r')
             break;
-        retval = (retval + v[i] * (1<<i)) % (1<<30);
+        retval = (uint64_t)(retval + v[i] * (1ULL<<i)) % (1ULL<<60);
     }
 
     return retval;
 }
 
-uint32_t FFI_assoc_hash(void){
+uint64_t FFI_assoc_hash_item_selective(int mode){
 
-    uint32_t seq_hash = 0;
-    uint32_t items_hash = 0;
+    uint64_t retval = 0;
 
     for(int j = 0; j < hv_counter; j++){
-
-        uint32_t temp_hash = hv_vector[j];
-
-        // For preserving the sequence in which KV pairs are added
-        seq_hash += (temp_hash * (1<<j)) % (1<<30);
-        seq_hash = seq_hash % (1<<30);
+        uint64_t temp_hash = (uint64_t)hv_vector[j];
 
         // For preserving the KV mappings
         item *it = primary_hashtable[temp_hash & hashmask(hashpower)];
@@ -112,10 +107,60 @@ uint32_t FFI_assoc_hash(void){
         if(it == NULL)
             continue;
 
-        items_hash = (FFI_get_item_hash(it) + items_hash)%(1 << 30);
+        // Calculate hash of first 8 bits of key
+        int i = 0;
+        uint64_t key_hash = 0;
+        char* k = ITEM_key(it);
+        int key_len = (it->nkey < 8)?(it->nkey):8;
+        for(; i < key_len; i++){
+            if(k[i] == '\0')
+                break;
+            key_hash = (uint64_t)(key_hash + k[i] * (1ULL<<i)) % (1ULL<<60);
+        }
+
+        // for slab only
+        if(mode == 1){
+            retval = (retval + (((it->slabs_clsid & ~(3<<6)) + 1)^key_hash) ) % (1ULL<<60);
+            printf("Taking assoc hash for unique slab states. For Key: %s, slabs_clsid: %d \n", ITEM_key(it),it->slabs_clsid & ~(3<<6));
+        }
+        else // LRU only
+        {
+            if(mode == 2)
+                retval = (retval + (((it->slabs_clsid & (3<<6)) + 1)^key_hash)) % (1ULL<<60);
+            else
+                assert(0);
+        }
     }
 
-    return (items_hash + seq_hash)%(1<<30);
+    return retval;
+}
+
+uint64_t FFI_assoc_hash(int mode){
+
+    if(mode == 1 || mode == 2)
+        return FFI_assoc_hash_item_selective(mode);
+
+    uint64_t seq_hash = 0;
+    uint64_t items_hash = 0;
+
+    for(int j = 0; j < hv_counter; j++){
+
+        uint64_t temp_hash = (uint64_t)hv_vector[j];
+
+        // For preserving the sequence in which KV pairs are added
+        seq_hash += (uint64_t)(temp_hash * (1ULL<<j)) % (1ULL<<60);
+        seq_hash = seq_hash % (1ULL<<60);
+
+        // For preserving the KV mappings
+        item *it = primary_hashtable[temp_hash & hashmask(hashpower)];
+        // If this has been removed
+        if(it == NULL)
+            continue;
+
+        items_hash = (FFI_get_item_hash(it) + items_hash)%(1ULL << 60);
+    }
+
+    return (items_hash + seq_hash)%(1ULL<<60);
 }
 #endif
 

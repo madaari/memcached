@@ -41,6 +41,13 @@
 	#define FFI_create_scheduler_pct()
 #endif
 
+// FFI for Coyote create_scheduler("DFSStrategy") API call
+#ifndef DISABLE_COYOTE_FFI
+	void FFI_create_scheduler_dfs();
+#else
+	#define FFI_create_scheduler_dfs()
+#endif
+
 // For deleting the scheduler instance
 #ifndef DISABLE_COYOTE_FFI
 	void FFI_delete_scheduler();

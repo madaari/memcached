@@ -9,7 +9,7 @@ using namespace std;
 vector<conn*>* global_conns;
 
 // To disable printf statements
-#define printf(x, ...)
+//#define printf(x, ...)
 
 char* get_key_name(int i, char prefix = ' '){
 
@@ -639,22 +639,94 @@ void set_workload_generic_testcase(conn* obj){
 */
 void set_coverage_workload(conn* c){
 
-	// 2 threads, trying to insert and get 2 unique, KV pairs
-	// Random number between 1 and 2
-	int max = 2;
+	// 2 threads, trying to insert and get 4 unique, KV pairs
+	int max = 60;
+
+	// Each value is of 100 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 100);
+	memset(short_val, '1', sizeof(char) * 100);
+	short_val[100 - 1] = '\0';
 
     // Each value is of 4 KB
-	char* long_val = (char*)FFI_malloc(sizeof(char) * 4 * 1000);
-	memset(long_val, '1', sizeof(char) * 4 * 1000);
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 4000);
+	memset(long_val, '1', sizeof(char) * 4000);
 	long_val[4000 - 1] = '\0';
 
 	// Set KV pair
     for (int i = 1; i <= max; i++) {
 
-        char* key = get_key_name(i * c->conn_id);
-        c->set_key(key, long_val, 0, true);
-        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	if(i < (max / 2) + 1){
+	        char* key = get_key_name(i * c->conn_id);
+	        if(i%2)
+	        	c->set_key(key, short_val, 0, true);
+	        else
+	        	c->set_key(key, short_val, 2, true);
+
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	}
+    	else{
+    		char* key = get_key_name(i * c->conn_id);
+    		if(i%2)
+	        	c->set_key(key, long_val, 0, true);
+	        else
+	        	c->set_key(key, long_val, 2, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	}
     }
+
+    // Get KV Pair
+    for (int i = 1; i <= max; i++) {
+
+    	if(i < (max / 2) + 1){
+	        char* key = get_key_name(i * c->conn_id);
+        	c->get_and_assert_key(key, short_val);
+        	c->get_and_assert_key(key, short_val);
+    	}
+    	else{
+			char* key = get_key_name(i * c->conn_id);
+        	c->get_and_assert_key(key, long_val);
+        	c->get_and_assert_key(key, long_val);
+    	}
+    }
+}
+
+void set_coverage_workload_large_items(conn* c){
+
+	c->add_kv_cmd("slabs automove 2\r\n");
+	c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("OK\r\n"));
+
+	// 2 threads, trying to insert and get 4 unique, KV pairs
+	int max = 20;
+
+	// Each value is of 100 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 100);
+	memset(short_val, '1', sizeof(char) * 100);
+	short_val[100 - 1] = '\0';
+
+    // Each value is of 4 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 4000);
+	memset(long_val, '1', sizeof(char) * 4000);
+	long_val[4000 - 1] = '\0';
+
+	// Set KV pair
+    for (int i = 1; i <= max; i++) {
+
+    	if(i < 6){
+    		//Slab id:4
+	        char* key = get_key_name(i * c->conn_id);
+	        c->set_key(key, short_val, 1, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	}
+    	else{
+    		//Slab id:18
+    		char* key = get_key_name(i * c->conn_id);
+	        c->set_key(key, long_val, 0, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	}
+    }
+
+    c->add_kv_cmd("slabs reassign 4 18\r\n");
+	c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
 
     /*
     // Get KV Pair
@@ -664,6 +736,145 @@ void set_coverage_workload(conn* c){
         c->get_and_assert_key(key, long_val);
     }
     */
+}
+
+void set_coverage_workload_lru(conn* c){
+
+	// 2 threads, trying to insert and get 4 unique, KV pairs
+	int max = 20;
+
+	// Each value is of 10 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
+	memset(short_val, '1', sizeof(char) * 10);
+	short_val[10 - 1] = '\0';
+
+    // Each value is of 1 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1000);
+	memset(long_val, '1', sizeof(char) * 1000);
+	long_val[1000 - 1] = '\0';
+
+	// Set KV pair
+    for (int i = 1; i <= max; i++) {
+
+    	if(i < 101){
+    		//Slab id:4
+	        char* key = get_key_name(i * c->conn_id);
+	        c->set_key(key, short_val, 1, false, 10);
+	        //c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	}
+    	else{
+    		//Slab id:18
+    		char* key = get_key_name(i * c->conn_id);
+	        c->set_key(key, long_val, 0, false, 1000);
+	        //c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+    	}
+    }
+}
+
+void set_coverage_workload_slab(conn* c){
+
+	c->add_kv_cmd("slabs automove 2\r\n");
+	c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("OK\r\n"));
+
+	static int tid = c->conn_id;
+	// 2 threads, trying to insert and get 4 unique, KV pairs
+	int max = 20;
+
+	// Each value is of 10 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
+	memset(short_val, '1', sizeof(char) * 10);
+	short_val[10 - 1] = '\0';
+
+    // Each value is of 4 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 4000);
+	memset(long_val, '1', sizeof(char) * 4000);
+	long_val[4000 - 1] = '\0';
+
+	if(tid == c->conn_id){
+
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+	        c->set_key(key, long_val, 0, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+	    }
+
+	    // In another slab
+	    char* key = get_key_name(100);
+        c->set_key(key, key, 0, true);
+        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+
+	} else {
+
+		// Delete KV pair
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+	        c->delete_key(key);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
+	    }
+	}
+}
+
+void set_coverage_workload_slab_equal_workload(conn* c){
+
+	c->add_kv_cmd("slabs automove 2\r\n");
+	c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("OK\r\n"));
+
+	static int tid = c->conn_id;
+	// 2 threads, trying to insert and get 4 unique, KV pairs
+	int max = 20;
+
+	// Each value is of 10 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
+	memset(short_val, '1', sizeof(char) * 10);
+	short_val[10 - 1] = '\0';
+
+    // Each value is of 4 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 4000);
+	memset(long_val, '1', sizeof(char) * 4000);
+	long_val[4000 - 1] = '\0';
+
+	// One thread will insert keys from [1,20] and deleter keys from [21, 41]
+	if(tid == c->conn_id){
+
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+    		if(i%2)
+	        	c->set_key(key, long_val, 0, true);
+	        else
+	        	c->set_key(key, short_val, 0, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+	    }
+
+	    for (int i = 21; i <= (max+21); i++) {
+
+    		char* key = get_key_name(i);
+	        c->delete_key(key);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
+	    }
+
+	// Second thread will insert keys from [21,41] and deleter keys from [1, 20]
+	} else {
+
+		for (int i = 1; i <= (max); i++) {
+
+    		char* key = get_key_name(i);
+	        c->delete_key(key);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
+	    }
+
+		for (int i = 21; i <= (max+21); i++) {
+
+    		char* key = get_key_name(i);
+	        if(i%2)
+	        	c->set_key(key, long_val, 0, true);
+	        else
+	        	c->set_key(key, short_val, 0, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+	    }
+	}
 }
 
 void reproduce_stats_sizes_bug(conn* c){
@@ -698,7 +909,11 @@ void init_sockets(){
 		//set_workload_meta_cmds(new_con); // <<-- For testing meta commands
 		//set_workload_generic_testcase(new_con); // <<-- For Generic test case
 		//set_coverage_workload(new_con); // <<-- For coverage test case
-		reproduce_stats_sizes_bug(new_con);
+		//set_coverage_workload_large_items(new_con);
+		//reproduce_stats_sizes_bug(new_con);
+		//set_coverage_workload_lru(new_con);
+		//set_coverage_workload_slab(new_con);
+		set_coverage_workload_slab_equal_workload(new_con);
 		global_conns->push_back(new_con);
 	}
 }
@@ -910,11 +1125,16 @@ int CT_new_socket(){
 
 	// Block the dispatcher thread, when we have already created all the sockets
 	if(count_num_sockets == i){
-		while(num_conn_registered != count_num_sockets){
-			FFI_schedule_next();
+
+		// If all workers threads have not completed their operations
+		if(num_conn_registered != count_num_sockets){
+			return 0;
 		}
-		i = 0;
-		return -1;
+		else{
+			// Close the server. Time to end this test case
+			i = 0;
+			return -1;
+		}
 	}
 
 	conn* c = global_conns->at(i);
@@ -930,13 +1150,13 @@ int set_options(int argc, char** argv, char** new_argv){
 		memcpy(new_argv[i], argv[i], 500);
 	}
 
-	char new_opt[8][500] = {"-m", "1", "-t", "2", "-I", "4096", "-o", "hashpower=12,slab_reassign,slab_chunk_max=1024,track_sizes"}; // <-- For Coverage
+	char new_opt[6][500] = {"-m", "32", "-t", "2", "-o", "hashpower=16,slab_reassign"}; // <-- For Coverage
 	//char new_opt[6][30] = {"-m", "32", "-t", "2", "-o", "slab_reassign"}; // <-- Generic test case
 	//char new_opt[6][30] = {"-m", "32", "-o", "no_modern", "-t", "1"}; // <-- For Lru crawler testcase
 	//char new_opt[7][500] = {"-m", "64", "-U", "0", "-o", "ext_page_size=8,ext_wbuf_size=2,ext_threads=1,ext_io_depth=2,ext_item_size=512,ext_item_age=2,ext_recache_rate=10000,ext_max_frag=0.9,ext_path=/temp/extstore.1:64m,slab_automove=0,ext_compact_under=1"};
 	//char new_opt[6][100] = {"-m", "2", "-o", "slab_reassign", "-t", "2"};
 	//char new_opt[4][100] = {"-m", "60", "-o", "watcher_logbuf_size=8"};
-	int num_new_opt = 8;
+	int num_new_opt = 6;
 
 	for(int j = 0; i < (argc + num_new_opt); i++, j++){
 
@@ -975,14 +1195,14 @@ void store_to_file(int itr, int size){
 	file.close();
 }
 
-std::vector<uint32_t>* all_hv = NULL;
-void check_and_add(uint32_t hv, int itr){
+std::vector<uint64_t>* all_hv = NULL;
+void check_and_add(uint64_t hv, int itr){
 
 	if(all_hv == NULL){
-		all_hv = new std::vector<uint32_t>();
+		all_hv = new std::vector<uint64_t>();
 	}
 
-	std::vector<uint32_t>::iterator it = std::find(all_hv->begin(), all_hv->end(), hv);
+	std::vector<uint64_t>::iterator it = std::find(all_hv->begin(), all_hv->end(), hv);
 
 	// If we havn't found this hv before, insert it!
 	if(it == all_hv->end()){
@@ -1007,11 +1227,12 @@ void print_and_clear_hvs(int total_iter){
 #undef printf
 
 // Test main method
-int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), uint32_t (get_program_state)(void), int argc, char** argv ){
+int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), uint64_t (get_program_state)(void), int argc, char** argv ){
 
-	FFI_create_scheduler_w_seed(1602754210015981153);
+	//FFI_create_scheduler_w_seed(1603350760484341101);
+	FFI_create_scheduler();
 
-	int num_iter = 300;
+	int num_iter = 1500;
 
 	char **new_argv = (char **)malloc(50 * sizeof(char *));
 	for(int i = 0; i < 50; i++){
@@ -1031,12 +1252,13 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 
 		run_iteration(new_argc, new_argv);
 
+		// Take the hash of all the subsystems
+		uint64_t hash = get_program_state();
+		check_and_add(hash, j);
+		printf("Hash of this iteration is %lu \n", hash);
+
 		FFI_detach_scheduler();
 		FFI_scheduler_assert();
-
-		uint32_t hash = get_program_state();
-		check_and_add(hash, j);
-		//printf("Hash of this iteration is %u \n", hash);
 
 		reset_all_globals(); // For resetting globals and libevent
 		FFI_free_all(); // For heap allocations

@@ -80,6 +80,168 @@ void item_stats_reset(void) {
     }
 }
 
+#include <math.h>
+uint64_t get_lru_hash() {
+    struct thread_stats thread_stats;
+    threadlocal_stats_aggregate(&thread_stats);
+    itemstats_t totals;
+    int n;
+    uint64_t retval = 0;
+
+    for (n = 0; n < MAX_NUMBER_OF_SLAB_CLASSES; n++) {
+        memset(&totals, 0, sizeof(itemstats_t));
+        int x;
+        int i;
+        unsigned int size = 0;
+        unsigned int lru_size_map[4];
+
+        for (x = 0; x < 4; x++) {
+            i = n | lru_type_map[x];
+            totals.evicted += itemstats[i].evicted;
+            totals.evicted_nonzero += itemstats[i].evicted_nonzero;
+            totals.outofmemory += itemstats[i].outofmemory;
+            totals.tailrepairs += itemstats[i].tailrepairs;
+            totals.reclaimed += itemstats[i].reclaimed;
+            totals.expired_unfetched += itemstats[i].expired_unfetched;
+            totals.evicted_unfetched += itemstats[i].evicted_unfetched;
+            totals.evicted_active += itemstats[i].evicted_active;
+            totals.crawler_reclaimed += itemstats[i].crawler_reclaimed;
+            totals.crawler_items_checked += itemstats[i].crawler_items_checked;
+            totals.lrutail_reflocked += itemstats[i].lrutail_reflocked;
+            totals.moves_to_cold += itemstats[i].moves_to_cold;
+            totals.moves_to_warm += itemstats[i].moves_to_warm;
+            totals.moves_within_lru += itemstats[i].moves_within_lru;
+            totals.direct_reclaims += itemstats[i].direct_reclaims;
+            totals.mem_requested += sizes_bytes[i];
+            size += sizes[i];
+            lru_size_map[x] = sizes[i];
+            /*
+            if (lru_type_map[x] == COLD_LRU && tails[i] != NULL) {
+                age = current_time - tails[i]->time;
+            } else if (lru_type_map[x] == HOT_LRU && tails[i] != NULL) {
+                age_hot = current_time - tails[i]->time;
+            } else if (lru_type_map[x] == WARM_LRU && tails[i] != NULL) {
+                age_warm = current_time - tails[i]->time;
+            }
+            */
+            if (lru_type_map[x] == COLD_LRU)
+                totals.evicted_time = itemstats[i].evicted_time;
+            switch (lru_type_map[x]) {
+                case HOT_LRU:
+                    totals.hits_to_hot = thread_stats.lru_hits[i];
+                    break;
+                case WARM_LRU:
+                    totals.hits_to_warm = thread_stats.lru_hits[i];
+                    break;
+                case COLD_LRU:
+                    totals.hits_to_cold = thread_stats.lru_hits[i];
+                    break;
+                case TEMP_LRU:
+                    totals.hits_to_temp = thread_stats.lru_hits[i];
+                    break;
+            }
+        }
+        if (size == 0)
+            continue;
+
+	int pp = 0;
+	retval = (retval + (uint64_t)(pow(3, pp++)*size)) % (1ULL<<60);
+	printf("Taking LRU hash of slab id: %d. Number of items in this slab class: %d\n", n, size);
+
+	if(settings.lru_maintainer_thread || 1){
+		retval = (retval + (uint64_t)(pow(3, pp++)*(lru_size_map[0]))) % (1ULL<<60);
+		retval = (retval + (uint64_t)(pow(3, pp++)*(lru_size_map[1]))) % (1ULL<<60);
+		retval = (retval + (uint64_t)(pow(3, pp++)*(lru_size_map[2]))) % (1ULL<<60);
+
+		printf("\t Number of items in HOT LRU: %u. Items in WARM LRU: %u. Items in cold:%u \n",
+			lru_size_map[0], lru_size_map[1], lru_size_map[2]);
+
+		if(settings.temp_lru){
+			retval = (retval + (uint64_t)(pow(3, pp++)*(lru_size_map[3]))) % (1ULL<<60);
+			printf("\t Number of items in TEMP LRU: %u \n", lru_size_map[3]);
+		}
+
+		retval = (retval + (uint64_t)(pow(3, pp++)*((unsigned long long)totals.moves_to_cold))) % (1ULL<<60);
+		retval = (retval + (uint64_t)(pow(3, pp++)*((unsigned long long)totals.moves_to_warm))) % (1ULL<<60);
+		retval = (retval + (uint64_t)(pow(3, pp++)*((unsigned long long)totals.moves_within_lru))) % (1ULL<<60);
+
+		printf("\t Number of items moved to cold: %llu, No. of items moved to warm: %llu, No. of items moved within lru: %llu\n",
+				(unsigned long long)totals.moves_to_cold, (unsigned long long)totals.moves_to_warm,
+				(unsigned long long)totals.moves_within_lru);
+	}
+
+	retval = (retval + (uint64_t)(pow(3, pp++)*((unsigned long long)totals.reclaimed))) % (1ULL<<60);
+
+	// make the hash sensitive to the slab class
+	retval = (retval * (1ULL<<(n+1))) % (1ULL<<60);
+
+	/*
+        APPEND_NUM_FMT_STAT(fmt, n, "number", "%u", size);
+        if (settings.lru_maintainer_thread) {
+            APPEND_NUM_FMT_STAT(fmt, n, "number_hot", "%u", lru_size_map[0]);
+            APPEND_NUM_FMT_STAT(fmt, n, "number_warm", "%u", lru_size_map[1]);
+            APPEND_NUM_FMT_STAT(fmt, n, "number_cold", "%u", lru_size_map[2]);
+            if (settings.temp_lru) {
+                APPEND_NUM_FMT_STAT(fmt, n, "number_temp", "%u", lru_size_map[3]);
+            }
+            APPEND_NUM_FMT_STAT(fmt, n, "age_hot", "%u", age_hot);
+            APPEND_NUM_FMT_STAT(fmt, n, "age_warm", "%u", age_warm);
+        }
+        APPEND_NUM_FMT_STAT(fmt, n, "age", "%u", age);
+        APPEND_NUM_FMT_STAT(fmt, n, "mem_requested", "%llu", (unsigned long long)totals.mem_requested);
+        APPEND_NUM_FMT_STAT(fmt, n, "evicted",
+                            "%llu", (unsigned long long)totals.evicted);
+        APPEND_NUM_FMT_STAT(fmt, n, "evicted_nonzero",
+                            "%llu", (unsigned long long)totals.evicted_nonzero);
+        APPEND_NUM_FMT_STAT(fmt, n, "evicted_time",
+                            "%u", totals.evicted_time);
+        APPEND_NUM_FMT_STAT(fmt, n, "outofmemory",
+                            "%llu", (unsigned long long)totals.outofmemory);
+        APPEND_NUM_FMT_STAT(fmt, n, "tailrepairs",
+                            "%llu", (unsigned long long)totals.tailrepairs);
+        APPEND_NUM_FMT_STAT(fmt, n, "reclaimed",
+                            "%llu", (unsigned long long)totals.reclaimed);
+        APPEND_NUM_FMT_STAT(fmt, n, "expired_unfetched",
+                            "%llu", (unsigned long long)totals.expired_unfetched);
+        APPEND_NUM_FMT_STAT(fmt, n, "evicted_unfetched",
+                            "%llu", (unsigned long long)totals.evicted_unfetched);
+        if (settings.lru_maintainer_thread) {
+            APPEND_NUM_FMT_STAT(fmt, n, "evicted_active",
+                                "%llu", (unsigned long long)totals.evicted_active);
+        }
+        APPEND_NUM_FMT_STAT(fmt, n, "crawler_reclaimed",
+                            "%llu", (unsigned long long)totals.crawler_reclaimed);
+        APPEND_NUM_FMT_STAT(fmt, n, "crawler_items_checked",
+                            "%llu", (unsigned long long)totals.crawler_items_checked);
+        APPEND_NUM_FMT_STAT(fmt, n, "lrutail_reflocked",
+                            "%llu", (unsigned long long)totals.lrutail_reflocked);
+        if (settings.lru_maintainer_thread) {
+            APPEND_NUM_FMT_STAT(fmt, n, "moves_to_cold",
+                                "%llu", (unsigned long long)totals.moves_to_cold);
+            APPEND_NUM_FMT_STAT(fmt, n, "moves_to_warm",
+                                "%llu", (unsigned long long)totals.moves_to_warm);
+            APPEND_NUM_FMT_STAT(fmt, n, "moves_within_lru",
+                                "%llu", (unsigned long long)totals.moves_within_lru);
+            APPEND_NUM_FMT_STAT(fmt, n, "direct_reclaims",
+                                "%llu", (unsigned long long)totals.direct_reclaims);
+            APPEND_NUM_FMT_STAT(fmt, n, "hits_to_hot",
+                                "%llu", (unsigned long long)totals.hits_to_hot);
+
+            APPEND_NUM_FMT_STAT(fmt, n, "hits_to_warm",
+                                "%llu", (unsigned long long)totals.hits_to_warm);
+
+            APPEND_NUM_FMT_STAT(fmt, n, "hits_to_cold",
+                                "%llu", (unsigned long long)totals.hits_to_cold);
+
+            APPEND_NUM_FMT_STAT(fmt, n, "hits_to_temp",
+                                "%llu", (unsigned long long)totals.hits_to_temp);
+        }
+	*/
+    }
+
+    return retval;
+}
+
 /* called with class lru lock held */
 void do_item_stats_add_crawl(const int i, const uint64_t reclaimed,
         const uint64_t unfetched, const uint64_t checked) {

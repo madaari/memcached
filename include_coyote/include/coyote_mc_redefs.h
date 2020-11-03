@@ -1,6 +1,10 @@
 #ifndef COYOTE_MC_REDEF
 #define COYOTE_MC_REDEF
 
+#include <sys/socket.h>
+
+#define EXECUTION_COYOTE_CONTROLLED
+
 /****************************** Reset Global variables **************************/
 #ifdef IN_LOGGER_FILE
 
@@ -12,6 +16,9 @@ pthread_mutex_t logger_stack_lock;
 pthread_mutex_t logger_atomics_mutex;
 int watcher_count;
 static uint64_t logger_gid;
+
+pthread_mutex_t logger_block_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t logger_block_cond = PTHREAD_COND_INITIALIZER;
 
 void logger_watcher_reset();
 
@@ -42,6 +49,8 @@ static int do_run_conn_timeout_thread;
 static bool monotonic;
 volatile int slab_rebalance_signal;
 extern int optind;
+extern pthread_cond_t logger_block_cond;
+extern pthread_cond_t lru_maintainer_block_cond;
 
 void reset_memcached_globals(){
 
@@ -124,6 +133,16 @@ void reset_assoc_globals(){
     hv_counter = 0;
 }
 
+pthread_mutex_t hv_vector_lock = PTHREAD_MUTEX_INITIALIZER;
+
+#ifdef EXECUTION_COYOTE_CONTROLLED
+	#define LOCK_HV_VECTOR() FFI_pthread_mutex_lock(&hv_vector_lock);
+	#define UNLOCK_HV_VECTOR() FFI_pthread_mutex_unlock(&hv_vector_lock);
+#else
+	#define LOCK_HV_VECTOR() pthread_mutex_lock(&hv_vector_lock);
+	#define UNLOCK_HV_VECTOR() pthread_mutex_unlock(&hv_vector_lock);
+#endif
+
 void FFI_store_hv(uint32_t HashValue){
 
 	assert(hv_counter < 4096 && "Total keys stored is more than 64");
@@ -133,8 +152,10 @@ void FFI_store_hv(uint32_t HashValue){
 		hv_counter = 0;
 	}
 
+	LOCK_HV_VECTOR();
 	hv_vector[hv_counter] = HashValue;
 	hv_counter++;
+	UNLOCK_HV_VECTOR();
 }
 #endif /*IN_ASSOC_FILE*/
 
@@ -233,11 +254,6 @@ void reset_slabs_globals(){
 	reset_slab_classes();
 }
 #endif /*IN_SLABS_FILE*/
-
-#include <sys/socket.h>
-
-//#define EXECUTION_COYOTE_CONTROLLED 1
-#undef EXECUTION_COYOTE_CONTROLLED
 
 #ifdef EXECUTION_COYOTE_CONTROLLED
 // pthread APIs

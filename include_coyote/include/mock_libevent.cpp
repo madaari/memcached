@@ -10,7 +10,7 @@
 #include <queue>
 #include <pthread.h>
 
-#undef EXECUTION_COYOTE_CONTROLLED
+#define EXECUTION_COYOTE_CONTROLLED
 #ifndef EXECUTION_COYOTE_CONTROLLED
 
 	#define FFI_pthread_mutex_init(x, y) pthread_mutex_init(x,y)

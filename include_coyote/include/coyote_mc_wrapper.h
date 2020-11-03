@@ -11,6 +11,9 @@
 #include <sys/socket.h>
 #include <poll.h>
 
+// Use this to enable catching intermediate states of slab and kv store
+#undef CATCH_INTERMEDIATE_STATES
+
 // Override pthread_create and join to add coyote specific instrumentation
 void *coyote_new_thread_wrapper(void*);
 
@@ -71,6 +74,10 @@ uint64_t FFI_assoc_hash(int);
 uint64_t get_slab_hash(void);
 uint64_t get_lru_hash(void);
 uint64_t FFI_assoc_hash_item_selective(int);
+void FFI_register_not_found(const char* , int);
+void FFI_register_set(const char* , int);
+void FFI_register_delete(const char* , int);
+void FFI_register_prepend(const char* , int);
 
 #endif /* COYOTE_MC_WRAP */
 

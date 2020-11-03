@@ -1496,6 +1496,7 @@ static int _store_item_copy_data(int comm, item *old_it, item *new_it, item *add
             memcpy(ITEM_data(new_it), ITEM_data(add_it), add_it->nbytes);
             memcpy(ITEM_data(new_it) + add_it->nbytes - 2 /* CRLF */, ITEM_data(old_it), old_it->nbytes);
         }
+	FFI_register_prepend(ITEM_key(old_it), old_it->nkey);
     }
     return 0;
 }
@@ -6428,6 +6429,7 @@ int main (int argc, char **argv) {
             retval = EXIT_FAILURE;
             break;
         }
+        pthread_cond_signal(&logger_block_cond);
     }
 
     switch (stop_main_loop) {

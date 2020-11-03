@@ -567,6 +567,10 @@ static void *logger_thread(void *arg) {
                 to_sleep = MIN_LOGGER_SLEEP;
         }
         logger_thread_sum_stats(&ls);
+
+        //pthread_mutex_lock(&logger_block_mutex);
+        //pthread_cond_wait(&logger_block_cond, &logger_block_mutex);
+        //pthread_mutex_unlock(&logger_block_mutex);
     }
 
     return NULL;
@@ -585,6 +589,8 @@ static int start_logger_thread(void) {
 
 static int stop_logger_thread(void) {
     do_run_logger_thread = 0;
+    pthread_cond_signal(&logger_block_cond);
+
     pthread_join(logger_tid, NULL);
     return 0;
 }

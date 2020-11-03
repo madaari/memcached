@@ -276,6 +276,7 @@ int assoc_insert(item *it, const uint32_t hv) {
     MEMCACHED_ASSOC_INSERT(ITEM_key(it), it->nkey);
 
 #ifdef COYOTE_CONTROLLED
+    FFI_register_set(ITEM_key(it), it->nkey);
     FFI_store_hv(hv);
 #endif
     return 1;
@@ -293,6 +294,10 @@ void assoc_delete(const char *key, const size_t nkey, const uint32_t hv) {
         nxt = (*before)->h_next;
         (*before)->h_next = 0;   /* probably pointless, but whatever. */
         *before = nxt;
+
+#ifdef COYOTE_CONTROLLED
+	FFI_register_delete(key, nkey);
+#endif
         return;
     }
     /* Note:  we never actually get here.  the callers don't delete things

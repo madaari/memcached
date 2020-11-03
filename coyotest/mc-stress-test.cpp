@@ -9,7 +9,7 @@ using namespace std;
 vector<conn*>* global_conns;
 
 // To disable printf statements
-//#define printf(x, ...)
+#define printf(x, ...)
 
 char* get_key_name(int i, char prefix = ' '){
 
@@ -771,6 +771,42 @@ void set_coverage_workload_lru(conn* c){
     }
 }
 
+void set_coverage_workload_kv_store(conn* c){
+
+	static int tid = c->conn_id;
+	// 2 threads, trying to insert 10 unique, KV pairs
+	int max = 10;
+
+	// Each value is of 10 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
+	memset(short_val, '0', sizeof(char) * 10);
+	short_val[10 - 1] = '\0';
+
+    // Each value is of 1 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1000);
+	memset(long_val, '1', sizeof(char) * 1000);
+	long_val[1000 - 1] = '\0';
+
+	if(tid == c->conn_id){
+
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+	        c->set_key(key, long_val, 0, true);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+	    }
+	} else {
+
+		// Prepend key
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+	        c->prepend_key(key, short_val, 0);
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
+	    }
+	}
+}
+
 void set_coverage_workload_slab(conn* c){
 
 	c->add_kv_cmd("slabs automove 2\r\n");
@@ -778,7 +814,7 @@ void set_coverage_workload_slab(conn* c){
 
 	static int tid = c->conn_id;
 	// 2 threads, trying to insert and get 4 unique, KV pairs
-	int max = 20;
+	int max = 10;
 
 	// Each value is of 10 Bytes
 	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
@@ -800,9 +836,11 @@ void set_coverage_workload_slab(conn* c){
 	    }
 
 	    // In another slab
-	    char* key = get_key_name(100);
+	    char* key = get_key_name(1000);
         c->set_key(key, key, 0, true);
         c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+
+        c->set_random_block();
 
 	} else {
 
@@ -813,6 +851,8 @@ void set_coverage_workload_slab(conn* c){
 	        c->delete_key(key);
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
 	    }
+
+	    c->set_random_block();
 	}
 }
 
@@ -823,7 +863,7 @@ void set_coverage_workload_slab_equal_workload(conn* c){
 
 	static int tid = c->conn_id;
 	// 2 threads, trying to insert and get 4 unique, KV pairs
-	int max = 20;
+	int max = 5;
 
 	// Each value is of 10 Bytes
 	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
@@ -835,7 +875,7 @@ void set_coverage_workload_slab_equal_workload(conn* c){
 	memset(long_val, '1', sizeof(char) * 4000);
 	long_val[4000 - 1] = '\0';
 
-	// One thread will insert keys from [1,20] and deleter keys from [21, 41]
+	// One thread will insert keys from [1,5] and deleter keys from [6, 11]
 	if(tid == c->conn_id){
 
 	    for (int i = 1; i <= max; i++) {
@@ -848,14 +888,14 @@ void set_coverage_workload_slab_equal_workload(conn* c){
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
 	    }
 
-	    for (int i = 21; i <= (max+21); i++) {
+	    for (int i = max+1; i <= (2*max + 1); i++) {
 
     		char* key = get_key_name(i);
 	        c->delete_key(key);
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
 	    }
 
-	// Second thread will insert keys from [21,41] and deleter keys from [1, 20]
+	// Second thread will insert keys from [6,11] and deleter keys from [1, 5]
 	} else {
 
 		for (int i = 1; i <= (max); i++) {
@@ -865,7 +905,7 @@ void set_coverage_workload_slab_equal_workload(conn* c){
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
 	    }
 
-		for (int i = 21; i <= (max+21); i++) {
+		for (int i = max+1; i <= (2*max + 1); i++) {
 
     		char* key = get_key_name(i);
 	        if(i%2)
@@ -912,8 +952,8 @@ void init_sockets(){
 		//set_coverage_workload_large_items(new_con);
 		//reproduce_stats_sizes_bug(new_con);
 		//set_coverage_workload_lru(new_con);
-		//set_coverage_workload_slab(new_con);
-		set_coverage_workload_slab_equal_workload(new_con);
+		set_coverage_workload_slab(new_con);
+		//set_coverage_workload_slab_equal_workload(new_con);
 		global_conns->push_back(new_con);
 	}
 }
@@ -957,6 +997,7 @@ ssize_t CT_socket_write(int fd, void* buff, int count){
 
 	memcpy(buff, st.c_str(), strlen(st.c_str()));
 
+	//printf("Thread id:%lu, reading command: %s \n", pthread_self(), st.c_str());
 	return strlen(st.c_str());
 }
 
@@ -1232,7 +1273,7 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 	//FFI_create_scheduler_w_seed(1603350760484341101);
 	FFI_create_scheduler();
 
-	int num_iter = 1500;
+	int num_iter = 1000;
 
 	char **new_argv = (char **)malloc(50 * sizeof(char *));
 	for(int i = 0; i < 50; i++){
@@ -1257,11 +1298,12 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 		check_and_add(hash, j);
 		printf("Hash of this iteration is %lu \n", hash);
 
+		reset_all_globals(); // For resetting globals and libevent
+		FFI_free_all(); // For heap allocations
+
 		FFI_detach_scheduler();
 		FFI_scheduler_assert();
 
-		reset_all_globals(); // For resetting globals and libevent
-		FFI_free_all(); // For heap allocations
 		del_sockets(); // For resetting client connection sockets
 	}
 

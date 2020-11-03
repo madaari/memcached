@@ -69,6 +69,83 @@ static void reset_slab_classes(){
     }
 }
 
+#include <math.h>
+uint64_t get_slab_hash(){
+
+    uint64_t retval = 0;
+
+    int i, total;
+    /* Get the per-thread stats which contain some interesting aggregates */
+    struct thread_stats thread_stats;
+    threadlocal_stats_aggregate(&thread_stats);
+
+    total = 1;
+    for(i = POWER_SMALLEST; i <= power_largest; i++) {
+        slabclass_t *p = &slabclass[i];
+        if (p->slabs != 0) {
+            int  power = 0;
+
+            // Give a unique multiplier to every field in one slabclass
+            retval = ((uint64_t)(retval + (uint64_t)((p->size * pow(3, power))))) % (1ULL<<60);
+            power++;
+            retval = ((uint64_t)(retval + (uint64_t)((p->perslab * pow(3, power))))) % (1ULL<<60);
+            power++;
+            retval = ((uint64_t)(retval + (uint64_t)(p->slabs * pow(3, power)))) % (1ULL<<60);
+            power++;
+            retval = ((uint64_t)(retval + (uint64_t)(p->sl_curr * pow(3, power)))) % (1ULL<<60);
+
+            // This should give a unique hash to every slab class even if their composition is same.
+            retval = (retval * (1<<total)) % (1ULL<<60);
+
+            printf("For slabclass:%d.\n\t chunksize:%u, chunks_per_page:%u, total_pages:%u, free_chunks:%u.\n", i,
+                p->size, p->perslab, p->slabs, p->sl_curr);
+            //printf("\t Used chunks:%u. free_chunk:%u. get hits:%llu \n",
+             //   (p->slabs)*(p->perslab) - p->sl_curr, p->sl_curr, (unsigned long long)thread_stats.slab_stats[i].get_hits);
+
+            /*
+            printf("\t cmd_set:%llu. delete_hits:%llu. incr_hits:%llu. decr_hits:%llu. cas_hits:%llu. cas_badval:%llu. touch_hits:%llu\n",
+                (unsigned long long)thread_stats.slab_stats[i].get_hits,
+                (unsigned long long)thread_stats.slab_stats[i].delete_hits,
+                (unsigned long long)thread_stats.slab_stats[i].incr_hits,
+                (unsigned long long)thread_stats.slab_stats[i].decr_hits,
+                (unsigned long long)thread_stats.slab_stats[i].cas_hits,
+                (unsigned long long)thread_stats.slab_stats[i].cas_badval,
+                (unsigned long long)thread_stats.slab_stats[i].touch_hits);
+                */
+
+/*
+            APPEND_NUM_STAT(i, "chunk_size", "%u", p->size);
+            APPEND_NUM_STAT(i, "chunks_per_page", "%u", perslab);
+            APPEND_NUM_STAT(i, "total_pages", "%u", slabs);
+            APPEND_NUM_STAT(i, "total_chunks", "%u", slabs * perslab);
+            APPEND_NUM_STAT(i, "used_chunks", "%u",
+                            slabs*perslab - p->sl_curr);
+            APPEND_NUM_STAT(i, "free_chunks", "%u", p->sl_curr);
+            APPEND_NUM_STAT(i, "free_chunks_end", "%u", 0);
+            APPEND_NUM_STAT(i, "get_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].get_hits);
+            APPEND_NUM_STAT(i, "cmd_set", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].set_cmds);
+            APPEND_NUM_STAT(i, "delete_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].delete_hits);
+            APPEND_NUM_STAT(i, "incr_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].incr_hits);
+            APPEND_NUM_STAT(i, "decr_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].decr_hits);
+            APPEND_NUM_STAT(i, "cas_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].cas_hits);
+            APPEND_NUM_STAT(i, "cas_badval", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].cas_badval);
+            APPEND_NUM_STAT(i, "touch_hits", "%llu",
+                    (unsigned long long)thread_stats.slab_stats[i].touch_hits);
+*/
+            total++;
+        }
+    }
+
+    return retval;
+}
+
 /*
  * Forward Declarations
  */

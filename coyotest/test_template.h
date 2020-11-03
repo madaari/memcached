@@ -19,6 +19,15 @@ static int socket_counter = 200;
 map<int, void*>* map_fd_to_conn = NULL;
 int num_conn_registered = 0;
 
+#define EXECUTION_COYOTE_CONTROLLED
+
+#undef ENABLE_BLOCK_AND_SIGNAL
+
+#ifdef EXECUTION_COYOTE_CONTROLLED
+static volatile bool block_and_signal_is_blocked = false;
+static long unsigned blocked_thread_id = 0;
+#endif
+
 struct conn{
 
 	int conn_id; /* Unique dentifier of every connection */
@@ -84,6 +93,20 @@ struct conn{
 		base = base + char_to_string("\r\n");
 
 		add_kv_cmd(base);
+	}
+
+	void set_random_block(){
+
+#ifdef EXECUTION_COYOTE_CONTROLLED
+
+		int size = kv_cmd->size();
+		int random_num = FFI_next_integer(size+1) % (size + 1);
+
+		string st("BlockAndSignal");
+		std::vector<string>::iterator it = kv_cmd->begin();
+
+		kv_cmd->insert(it + random_num, st);
+#endif
 	}
 
 	void incr_key(const char* key, const int val){
@@ -192,6 +215,8 @@ struct conn{
 
 	string get_next_cmd(){
 
+		restart:
+
 		string retval;
 		assert(kv_cmd != NULL && "Why will this ever happen?");
 
@@ -209,6 +234,34 @@ struct conn{
 		// When ever a connection send a watch command, it is equivalent to dead
 		if(retval == string("watch\n"))
 			num_conn_registered++;
+
+#ifdef EXECUTION_COYOTE_CONTROLLED
+		if(retval == string("BlockAndSignal")){
+
+#ifdef ENABLE_BLOCK_AND_SIGNAL
+
+			if(block_and_signal_is_blocked == false){
+				block_and_signal_is_blocked = true;
+				blocked_thread_id = (long unsigned)pthread_self();
+
+				FFI_create_resource(pthread_self());
+				while(block_and_signal_is_blocked){
+					FFI_wait_resource(pthread_self());
+				}
+				FFI_signal_resource(blocked_thread_id);
+				FFI_delete_resource(blocked_thread_id);
+				blocked_thread_id = 0;
+			}
+			else{
+
+				block_and_signal_is_blocked = false;
+				FFI_signal_resource(blocked_thread_id);
+			}
+#endif
+
+			goto restart;
+		}
+#endif
 
 		return retval;
 	}

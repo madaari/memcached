@@ -2021,7 +2021,8 @@ static void process_delete_command(conn *c, token_t *tokens, const size_t ntoken
         pthread_mutex_lock(&c->thread->stats.mutex);
         c->thread->stats.delete_misses++;
         pthread_mutex_unlock(&c->thread->stats.mutex);
-
+	
+	FFI_register_not_found(key, nkey);
         out_string(c, "NOT_FOUND");
     }
     item_unlock(hv);

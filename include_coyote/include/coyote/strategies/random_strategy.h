@@ -7,6 +7,8 @@
 #include "random.h"
 #include "../operations/operations.h"
 
+#define ENABLE_PROBABILISTIC_RANDOM
+
 namespace coyote
 {
 	class RandomStrategy
@@ -17,6 +19,11 @@ namespace coyote
 
 		// The seed used by the current iteration.
 		size_t iteration_seed;
+
+#ifdef ENABLE_PROBABILISTIC_RANDOM
+		// ID of the currently scheduled operation
+		size_t current_operation_id;
+#endif
 
 	public:
 		RandomStrategy(size_t seed) noexcept;

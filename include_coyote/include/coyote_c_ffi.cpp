@@ -16,7 +16,7 @@
 #include <errno.h>
 #include <algorithm>
 
-// Require C++11
+// Require C++11 or above
 #include <unordered_map>
 #include <vector>
 
@@ -24,15 +24,20 @@ typedef unsigned long long llu;
 
 Scheduler* scheduler = NULL;
 
+// Use this flag to kepp a track of all heap allocations and get rid of heap memory leaks.
 #define INTERCEPT_HEAP_ALLOCATORS
+
 // Use this flag to enable printf statements in functions modelling pthread APIs
 // #define DEBUG_PTHREAD_API 1
 
 // Use this flag to use PCT branch of Coyote Scheduler
-//#define USING_PCT_BRANCH 1
+// #define USING_PCT_BRANCH 1
 
-// using DFSStrategy Branch
+// Using DFSStrategy Branch
 // #define USING_DFS_STRATEGY 1
+
+// Use this to enable schedule_next() statements in heap allocators.
+#define EXECUTION_COYOTE_CONTROLLED
 
 /******************************************** CoyoteLock Start ******************************************/
 
@@ -134,7 +139,7 @@ std::vector<void *>* lazy_mutex_init_list = NULL;
 // List to keep a track of all statically allocated global conditional variable and initialize them if needed
 std::vector<void *>* lazy_cond_init_list = NULL;
 
-/************************************* For checking liveliness property *******************************/
+/************************************* For checking liveness property *******************************/
 
 // Memcached can be in the following 3 states
 enum program_state{STATE_READ, STATE_WRITE, STATE_INIT};
@@ -965,8 +970,6 @@ int FFI_pthread_cond_destroy(void* ptr){
 } //End of Extern "C"
 
 #ifdef INTERCEPT_HEAP_ALLOCATORS
-
-#undef EXECUTION_COYOTE_CONTROLLED
 
 #ifndef EXECUTION_COYOTE_CONTROLLED
 	#include <pthread.h>

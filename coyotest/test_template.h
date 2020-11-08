@@ -8,6 +8,7 @@
 #include <map>
 #include <unistd.h>
 #include <csignal>
+#include <atomic>
 
 extern "C"{
 	#include <coyote_c_ffi.h>
@@ -227,13 +228,13 @@ struct conn{
 			kv_cmd->erase(it);
 		}else{
 
-			num_conn_registered++;
+			__atomic_fetch_add(&num_conn_registered, 1, __ATOMIC_SEQ_CST);
 			retval = string("quit\r\n");
 		}
 
 		// When ever a connection send a watch command, it is equivalent to dead
 		if(retval == string("watch\n"))
-			num_conn_registered++;
+			__atomic_fetch_add(&num_conn_registered, 1, __ATOMIC_SEQ_CST);
 
 #ifdef EXECUTION_COYOTE_CONTROLLED
 		if(retval == string("BlockAndSignal")){

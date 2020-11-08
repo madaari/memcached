@@ -300,11 +300,12 @@ int FFI_event_base_loop(void* ev_base, int flags){
 		if(!isRestarted){
 
 			// If it is already signaled, leave this.
+			FFI_pthread_mutex_lock(&(wl->lock));
 			if(!(wl->is_signaled)){
-				FFI_pthread_mutex_lock(&(wl->lock));
 				FFI_pthread_cond_wait(&(wl->cond), &(wl->lock));
-				FFI_pthread_mutex_unlock(&(wl->lock));
 			}
+			FFI_pthread_mutex_unlock(&(wl->lock));
+
 			// We can safely set the is_signaled bool var to false, after reading it.
 			wl->is_signaled = false;
 
@@ -441,8 +442,11 @@ ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 	}
 
 	// Signal the worker!!!!!
+	FFI_pthread_mutex_lock(&(wl->lock));
 	wl->is_signaled = true;
 	FFI_pthread_cond_signal(&(wl->cond));
+	FFI_pthread_mutex_unlock(&(wl->lock));
+
 	FFI_schedule_next();
 
 	return retval;

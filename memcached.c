@@ -264,7 +264,13 @@ static void settings_init(void) {
     settings.backlog = 1024;
     settings.binding_protocol = negotiating_prot;
     settings.item_size_max = 1024 * 1024; /* The famous 1MB upper limit. */
+
+#ifdef COMPLETE_COVERAGE_TESTCASE
+    settings.slab_page_size = 1024 * 128; /* chunks are split from 128KB pages. */
+#else
     settings.slab_page_size = 1024 * 1024; /* chunks are split from 1MB pages. */
+#endif
+
     settings.slab_chunk_size_max = settings.slab_page_size / 2;
     settings.sasl = false;
     settings.maxconns_fast = true;

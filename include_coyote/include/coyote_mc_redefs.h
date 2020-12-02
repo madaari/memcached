@@ -79,6 +79,8 @@ static uint32_t item_lock_count;
 unsigned int item_lock_hashpower;
 
 void reset_worker_thread(void);
+void FFI_lib_event_pause_worker();
+void FFI_lib_event_resume_worker();
 
 void reset_thread_globals(){
 
@@ -94,6 +96,8 @@ void reset_thread_globals(){
 #endif /*IN_THREAD_FILE*/
 
 #ifdef IN_ASSOC_FILE
+
+#include <string.h>
 
 static volatile int do_run_maintenance_thread;
 static unsigned int expand_bucket;
@@ -114,7 +118,30 @@ static int hv_counter = 0;
 void FFI_store_hv(uint32_t HashValue);
 uint64_t FFI_get_item_hash(item* it);
 
-void reset_assoc_globals(){
+// For exporting important info about MC to test case
+struct global_stats
+{
+	uint64_t lru_crawler_runs;
+	uint64_t lru_maintainer_runs;
+	uint64_t slab_rebalancer_runs;
+	uint64_t assoc_maintainer_runs;
+	uint64_t hash_kv;
+	uint64_t hash_lru;
+	uint64_t hash_slab;
+};
+
+void* reset_assoc_globals(){
+
+    struct global_stats *data = (struct global_stats*)FFI_malloc(sizeof(struct global_stats));
+
+	if(data != NULL){
+		// Initialize it with 0
+		memset(data, 0, sizeof(struct global_stats));
+		data->lru_crawler_runs = stats.lru_crawler_starts;
+		data->lru_maintainer_runs = stats.lru_maintainer_juggles;
+		data->slab_rebalancer_runs = stats.slabs_moved;
+		data->assoc_maintainer_runs = hashpower-16;
+	}
 
 	do_run_maintenance_thread = 1;
 	expand_bucket = 0;
@@ -131,6 +158,19 @@ void reset_assoc_globals(){
     	hv_vector = NULL;
     }
     hv_counter = 0;
+
+	return data;
+}
+
+uint64_t get_global_var_state(void){
+
+	uint64_t retval = 0;
+	retval = retval + stats.lru_crawler_starts * 23;
+	retval = retval + stats.lru_maintainer_juggles * 37;
+	retval = retval + stats.slabs_moved * 43;
+	retval = retval + hashpower * 47;
+
+	return retval;
 }
 
 pthread_mutex_t hv_vector_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -153,6 +193,13 @@ void FFI_store_hv(uint32_t HashValue){
 	}
 
 	LOCK_HV_VECTOR();
+	for (int i = 0; i < hv_counter; i++){
+
+		if(hv_vector[i] == HashValue){
+			UNLOCK_HV_VECTOR();
+			return;
+		}
+	}
 	hv_vector[hv_counter] = HashValue;
 	hv_counter++;
 	UNLOCK_HV_VECTOR();
@@ -344,6 +391,8 @@ void reset_slabs_globals(){
 	#define FFI_schedule_next()
 #endif
 
+//#define COMPLETE_COVERAGE_TESTCASE
 // #define COYOTE_2019_BUGS // For introducing data race bugs
+// #define INJECTED_BUG3 // For bug between slab rebalancer thread and worker thread
 
 #endif /* COYOTE_MC_REDEF */

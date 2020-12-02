@@ -31,13 +31,13 @@ Scheduler* scheduler = NULL;
 // #define DEBUG_PTHREAD_API 1
 
 // Use this flag to use PCT branch of Coyote Scheduler
-// #define USING_PCT_BRANCH 1
+#define USING_PCT_BRANCH 1
 
 // Using DFSStrategy Branch
 // #define USING_DFS_STRATEGY 1
 
 // Use this to enable schedule_next() statements in heap allocators.
-#define EXECUTION_COYOTE_CONTROLLED
+#define  EXECUTION_COYOTE_CONTROLLED
 
 /******************************************** CoyoteLock Start ******************************************/
 
@@ -214,6 +214,34 @@ void FFI_create_scheduler_pct(){
 	}
 
 	std::string st = "PCTStrategy";
+	scheduler = new coyote::Scheduler(st);
+	assert(scheduler != NULL && "coyote::Scheduler() returned NULL!");
+}
+
+// Create scheduler with the fairpct strategy
+void FFI_create_scheduler_fairpct(size_t prefixLen){
+
+	// Udit: Assuming that we can have only one instance
+	// of Coyote scheduler
+	if(scheduler != NULL){
+		return;
+	}
+
+	std::string st = "FairPCTStrategy";
+	scheduler = new coyote::Scheduler(st, prefixLen);
+	assert(scheduler != NULL && "coyote::Scheduler() returned NULL!");
+}
+
+// Create scheduler with the portfolio strategy
+void FFI_create_scheduler_portfolio(){
+
+	// Udit: Assuming that we can have only one instance
+	// of Coyote scheduler
+	if(scheduler != NULL){
+		return;
+	}
+
+	std::string st = "PortfolioStrategy";
 	scheduler = new coyote::Scheduler(st);
 	assert(scheduler != NULL && "coyote::Scheduler() returned NULL!");
 }
@@ -1036,7 +1064,7 @@ extern "C"{
 	void* FFI_malloc(size_t s){
 
 #ifdef EXECUTION_COYOTE_CONTROLLED
-		//FFI_schedule_next();
+		FFI_schedule_next();
 #endif
 		void* retval = malloc(s);
 		add_to_allocation_vector(retval);
@@ -1046,7 +1074,7 @@ extern "C"{
 	void* FFI_calloc(size_t a, size_t b){
 
 #ifdef EXECUTION_COYOTE_CONTROLLED
-		//FFI_schedule_next();
+		FFI_schedule_next();
 #endif
 		void* retval = calloc(a, b);
 		add_to_allocation_vector(retval);
@@ -1056,7 +1084,7 @@ extern "C"{
 	void* FFI_realloc(void* ptr, size_t s){
 
 #ifdef EXECUTION_COYOTE_CONTROLLED
-		//FFI_schedule_next();
+		FFI_schedule_next();
 #endif
 		remove_from_allocation_vector(ptr);
 
@@ -1068,7 +1096,7 @@ extern "C"{
 	void FFI_free(void* ptr){
 
 #ifdef EXECUTION_COYOTE_CONTROLLED
-		//FFI_schedule_next();
+		FFI_schedule_next();
 #endif
 		remove_from_allocation_vector(ptr);
 		free(ptr);

@@ -116,7 +116,7 @@ uint64_t get_slab_hash(){
 /*
             APPEND_NUM_STAT(i, "chunk_size", "%u", p->size);
             APPEND_NUM_STAT(i, "chunks_per_page", "%u", perslab);
-            APPEND_NUM_STAT(i, "total_pages", "%u", slabs);
+APPEND_NUM_STAT(i, "total_pages", "%u", slabs);
             APPEND_NUM_STAT(i, "total_chunks", "%u", slabs * perslab);
             APPEND_NUM_STAT(i, "used_chunks", "%u",
                             slabs*perslab - p->sl_curr);
@@ -424,9 +424,20 @@ static void slabs_preallocate (const unsigned int maxslabs) {
 static int grow_slab_list (const unsigned int id) {
     slabclass_t *p = &slabclass[id];
     if (p->slabs == p->list_size) {
+
+       // printf("hrow_slab_list: reallocing: %d\n", id);
+
+#ifdef INJECTED_BUG3
+        FFI_check_slabs_data_race(false);
+#endif
+
         size_t new_size =  (p->list_size != 0) ? p->list_size * 2 : 16;
         void *new_list = realloc(p->slab_list, new_size * sizeof(void *));
         if (new_list == 0) return 0;
+
+#ifdef INJECTED_BUG3
+        FFI_check_slabs_data_race(true);
+#endif
         p->list_size = new_size;
         p->slab_list = new_list;
     }
@@ -454,6 +465,7 @@ static void *get_page_from_global_pool(void) {
 }
 
 static int do_slabs_newslab(const unsigned int id) {
+
     slabclass_t *p = &slabclass[id];
     slabclass_t *g = &slabclass[SLAB_GLOBAL_PAGE_POOL];
     int len = (settings.slab_reassign || settings.slab_chunk_size_max != settings.slab_page_size)
@@ -475,6 +487,9 @@ static int do_slabs_newslab(const unsigned int id) {
         MEMCACHED_SLABS_SLABCLASS_ALLOCATE_FAILED(id);
         return 0;
     }
+
+    //if(id == 19)
+    //    sleep(1);
 
     // Always wipe the memory at this stage: in restart mode the mmap memory
     // could be unused, yet still full of data. Better for usability if we're
@@ -829,9 +844,23 @@ static int slab_rebalance_start(void) {
 
     s_cls = &slabclass[slab_rebal.s_clsid];
 
+#ifdef INJECTED_BUG3
+
+    pthread_mutex_unlock(&slabs_lock);
+    //printf("slab_rebalance_start: calling growlist\n");
+
     if (!grow_slab_list(slab_rebal.d_clsid)) {
         no_go = -1;
     }
+
+    //printf("slab_rebalance_start: exiting growlist\n");
+    pthread_mutex_lock(&slabs_lock);
+
+#else
+    if (!grow_slab_list(slab_rebal.d_clsid)) {
+        no_go = -1;
+    }
+#endif
 
     if (s_cls->slabs < 2)
         no_go = -3;
@@ -947,6 +976,8 @@ static int slab_rebalance_move(void) {
     uint32_t hv;
     void *hold_lock;
     enum move_status status = MOVE_PASS;
+
+    printf("slab rebalancer move\n");
 
     s_cls = &slabclass[slab_rebal.s_clsid];
     // the offset to check if completed or not
@@ -1232,6 +1263,7 @@ static void slab_rebalance_finish(void) {
     }
 
     d_cls->slab_list[d_cls->slabs++] = slab_rebal.slab_start;
+
     /* Don't need to split the page into chunks if we're just storing it */
     if (slab_rebal.d_clsid > SLAB_GLOBAL_PAGE_POOL) {
         memset(slab_rebal.slab_start, 0, (size_t)settings.slab_page_size);
@@ -1317,9 +1349,11 @@ static void *slab_rebalance_thread(void *arg) {
                 backoff_timer = backoff_max;
         }
 
-        if (slab_rebalance_signal == 0) {
+        if (slab_rebalance_signal == 0 && do_run_slab_rebalance_thread) {
             /* always hold this lock while we're running */
+            printf("slab rebalancer blocking\n");
             pthread_cond_wait(&slab_rebalance_cond, &slabs_rebalance_lock);
+            printf("slab rebalancer signal recieved\n");
         }
     }
 
@@ -1377,6 +1411,7 @@ static enum reassign_result_type do_slabs_reassign(int src, int dst) {
     slab_rebal.d_clsid = dst;
 
     slab_rebalance_signal = 1;
+    printf("signaling slab rebalacer now\n");
     pthread_cond_signal(&slab_rebalance_cond);
 
     return REASSIGN_OK;
@@ -1389,15 +1424,18 @@ enum reassign_result_type slabs_reassign(int src, int dst) {
     }
     ret = do_slabs_reassign(src, dst);
     pthread_mutex_unlock(&slabs_rebalance_lock);
+    usleep(200);
     return ret;
 }
 
 /* If we hold this lock, rebalancer can't wake up or move */
 void slabs_rebalancer_pause(void) {
     pthread_mutex_lock(&slabs_rebalance_lock);
+    printf("slab rebalancer paused\n");
 }
 
 void slabs_rebalancer_resume(void) {
+    printf("slab rebalancer resume\n");
     pthread_mutex_unlock(&slabs_rebalance_lock);
 }
 
@@ -1419,8 +1457,13 @@ int start_slab_maintenance_thread(void) {
 /* The maintenance thread is on a sleep/loop cycle, so it should join after a
  * short wait */
 void stop_slab_maintenance_thread(void) {
+    //usleep(4800);
+
     mutex_lock(&slabs_rebalance_lock);
     do_run_slab_rebalance_thread = 0;
+    if(slab_rebalance_signal){
+        printf("This should cause an error\n");
+    }
     pthread_cond_signal(&slab_rebalance_cond);
     pthread_mutex_unlock(&slabs_rebalance_lock);
 

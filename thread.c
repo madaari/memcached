@@ -85,6 +85,7 @@ unsigned int item_lock_hashpower;
 static LIBEVENT_THREAD *threads;
 
 void reset_worker_thread(){
+    //printf("resetting worker threads\n");
     threads = NULL;
     cqi_freelist = NULL;
 }
@@ -145,7 +146,6 @@ static void register_thread_initialized(void) {
 /* Must not be called with any deeper locks held */
 void pause_threads(enum pause_thread_types type) {
     char buf[1];
-    int i;
 
     buf[0] = 0;
     switch (type) {
@@ -159,7 +159,11 @@ void pause_threads(enum pause_thread_types type) {
 #endif
         case PAUSE_WORKER_THREADS:
             buf[0] = 'p';
+#ifndef COMPLETE_COVERAGE_TESTCASE
             pthread_mutex_lock(&worker_hang_lock);
+#else
+            FFI_lib_event_pause_worker();
+#endif
             break;
         case RESUME_ALL_THREADS:
             slabs_rebalancer_resume();
@@ -170,7 +174,11 @@ void pause_threads(enum pause_thread_types type) {
             storage_write_resume();
 #endif
         case RESUME_WORKER_THREADS:
+#ifndef COMPLETE_COVERAGE_TESTCASE
             pthread_mutex_unlock(&worker_hang_lock);
+#else
+            FFI_lib_event_resume_worker();
+#endif
             break;
         default:
             fprintf(stderr, "Unknown lock type: %d\n", type);
@@ -183,8 +191,10 @@ void pause_threads(enum pause_thread_types type) {
         return;
     }
 
+#ifndef COMPLETE_COVERAGE_TESTCASE
     pthread_mutex_lock(&init_lock);
     init_count = 0;
+    int i;
     for (i = 0; i < settings.num_threads; i++) {
         if (write(threads[i].notify_send_fd, buf, 1) != 1) {
             perror("Failed writing to notify pipe");
@@ -193,6 +203,8 @@ void pause_threads(enum pause_thread_types type) {
     }
     wait_for_thread_registration(settings.num_threads);
     pthread_mutex_unlock(&init_lock);
+#endif
+
 }
 
 // MUST not be called with any deeper locks held

@@ -67,7 +67,7 @@ uint64_t FFI_get_item_hash(item* it){
     //retval = (retval + (it->slabs_clsid & ~(3<<6))*(27) + (it->refcount)*(243)) % (1ULL<<60);
     //retval = (retval + (it->slabs_clsid & (3<<6))*(81)) % (1ULL<<60);
 
-    printf("Taking hash. For Key: %s, got refcount: %d, slabs_clsid: %d \n", ITEM_key(it), it->refcount, it->slabs_clsid & ~(3<<6));
+    printf("Taking hash. For Key: %s, Data key_len: %d \n", ITEM_key(it), it->nbytes);
 
     char* k = ITEM_key(it);
     char* v = ITEM_data(it);
@@ -125,8 +125,10 @@ uint64_t FFI_assoc_hash_item_selective(int mode){
         }
         else // LRU only
         {
-            if(mode == 2)
+            if(mode == 2){
                 retval = (retval + (((it->slabs_clsid & (3<<6)) + 1)^key_hash)) % (1ULL<<60);
+                printf("Taking assoc hash for unique lru states. For Key: %s, lru id %d \n", ITEM_key(it),(it->slabs_clsid & (3<<6)) >> 5);
+            }
             else
                 assert(0);
         }
@@ -148,7 +150,7 @@ uint64_t FFI_assoc_hash(int mode){
         uint64_t temp_hash = (uint64_t)hv_vector[j];
 
         // For preserving the sequence in which KV pairs are added
-        seq_hash += (uint64_t)(temp_hash * (1ULL<<j)) % (1ULL<<60);
+        seq_hash += (uint64_t)(temp_hash + (1ULL<<j)) % (1ULL<<60);
         seq_hash = seq_hash % (1ULL<<60);
 
         // For preserving the KV mappings
@@ -237,11 +239,15 @@ static void assoc_expand(void) {
         hashpower++;
         expanding = true;
         expand_bucket = 0;
+#ifndef EXECUTION_COYOTE_CONTROLLED
         STATS_LOCK();
+#endif
         stats_state.hash_power_level = hashpower;
         stats_state.hash_bytes += hashsize(hashpower) * sizeof(void *);
         stats_state.hash_is_expanding = true;
+#ifndef EXECUTION_COYOTE_CONTROLLED
         STATS_UNLOCK();
+#endif
     } else {
         primary_hashtable = old_hashtable;
         /* Bad news, but we can keep running. */
@@ -250,7 +256,14 @@ static void assoc_expand(void) {
 
 void assoc_start_expand(uint64_t curr_items) {
     if (pthread_mutex_trylock(&maintenance_lock) == 0) {
+
+#ifndef COMPLETE_COVERAGE_TESTCASE
         if (curr_items > (hashsize(hashpower) * 3) / 2 && hashpower < HASHPOWER_MAX) {
+#else
+
+// Ensure that assoc expansion happen always after curr_item>10
+        if (curr_items > 10 && hashpower < HASHPOWER_MAX) {
+#endif
             pthread_cond_signal(&maintenance_cond);
         }
         pthread_mutex_unlock(&maintenance_lock);
@@ -405,6 +418,9 @@ void stop_assoc_maintenance_thread() {
     do_run_maintenance_thread = 0;
     pthread_cond_signal(&maintenance_cond);
     mutex_unlock(&maintenance_lock);
+
+    if(maintenance_tid == 0)
+	return;
 
     /* Wait for the maintenance thread to stop */
     pthread_join(maintenance_tid, NULL);

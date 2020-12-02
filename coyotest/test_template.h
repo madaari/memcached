@@ -22,12 +22,22 @@ int num_conn_registered = 0;
 
 #define EXECUTION_COYOTE_CONTROLLED
 
-#undef ENABLE_BLOCK_AND_SIGNAL
-
 #ifdef EXECUTION_COYOTE_CONTROLLED
+#define ENABLE_BLOCK_AND_SIGNAL
 static volatile bool block_and_signal_is_blocked = false;
 static long unsigned blocked_thread_id = 0;
 #endif
+
+struct global_stats
+{
+	uint64_t lru_crawler_runs;
+	uint64_t lru_maintainer_runs;
+	uint64_t slab_rebalancer_runs;
+	uint64_t assoc_maintainer_runs;
+	uint64_t hash_kv;
+	uint64_t hash_lru;
+	uint64_t hash_slab;
+};
 
 struct conn{
 

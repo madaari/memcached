@@ -8,8 +8,14 @@ using namespace std;
 
 vector<conn*>* global_conns;
 
+volatile int temp_counter_oom = 0;
+volatile int temp_counter_not_found = 0;
+volatile int temp_counter_prepend = 0;
+
+volatile bool found_this_iteration = false;
+
 // To disable printf statements
-#define printf(x, ...)
+//#define printf(x, ...)
 
 char* get_key_name(int i, char prefix = ' '){
 
@@ -77,6 +83,10 @@ ssize_t parse_get_response(struct msghdr *msg, string value){
 		char* msg1 = (char*)( ((struct iovec *)(msg->msg_iov))->iov_base);
 		retval = strlen(msg1);
 
+
+		temp_counter_not_found++;
+		//found_this_iteration = true;
+
 		// This will happen when the iten is not in the kv store
 		assert( strcmp(msg1, "END\r\n") == 0);
 	}
@@ -88,6 +98,14 @@ ssize_t parse_get_response(struct msghdr *msg, string value){
 
 		string st(msg2);
 		assert( st.find(value) != string::npos );
+
+		//assert(st == value);
+		if(st != value){
+			string st_hello("hello");
+			//assert(st_hello.find(value) != string::npos);
+
+			temp_counter_prepend++;
+		}
 	}
 
 	return retval;
@@ -98,6 +116,16 @@ ssize_t parse_generic_response(struct msghdr *msg, string value){
 
 	string response((char*)(msg->msg_iov->iov_base));
 
+	if((response.find(value) == string::npos)){
+
+		assert(0);
+		string error_string("SERVER_ERROR");
+		if((response.find(error_string) != string::npos)){
+			temp_counter_oom++;
+			return (msg->msg_iov->iov_len);
+		}
+		//printf("COuld not store KV pair into MC. Memory full. %s \n", (char*)(msg->msg_iov->iov_base) );
+	}
 	assert(response.find(value) != string::npos && "We can find the string 'value' in KV store's respone");
 
 	return (msg->msg_iov->iov_len);
@@ -639,8 +667,8 @@ void set_workload_generic_testcase(conn* obj){
 */
 void set_coverage_workload(conn* c){
 
-	// 2 threads, trying to insert and get 4 unique, KV pairs
-	int max = 60;
+	// 2 threads, trying to insert and get 8 unique, KV pairs
+	int max = 4;
 
 	// Each value is of 100 Bytes
 	char* short_val = (char*)FFI_malloc(sizeof(char) * 100);
@@ -660,7 +688,7 @@ void set_coverage_workload(conn* c){
 	        if(i%2)
 	        	c->set_key(key, short_val, 0, true);
 	        else
-	        	c->set_key(key, short_val, 2, true);
+	        	c->set_key(key, short_val, 1, true);
 
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
     	}
@@ -669,7 +697,7 @@ void set_coverage_workload(conn* c){
     		if(i%2)
 	        	c->set_key(key, long_val, 0, true);
 	        else
-	        	c->set_key(key, long_val, 2, true);
+	        	c->set_key(key, long_val, 1, true);
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
     	}
     }
@@ -688,6 +716,339 @@ void set_coverage_workload(conn* c){
         	c->get_and_assert_key(key, long_val);
     	}
     }
+}
+
+void set_workload_for_combined_coverage(conn* c){
+
+	c->add_kv_cmd("slabs automove 2\r\n");
+	c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("OK\r\n"));
+
+	//string lru_crawler("lru_crawler enable\r\n");
+	//c->add_kv_cmd(lru_crawler);
+	//sc->set_expected_kv_resp( c->char_to_string("generic"), c->char_to_string("\r\n") );
+
+	static int tid = c->conn_id;
+	// 2 threa, trying to insert and get 15 unique, KV pairs
+	int max = 15;
+
+	// Each value is of 10 Bytes
+	char* short_val = (char*)FFI_malloc(sizeof(char) * 10);
+	memset(short_val, '1', sizeof(char) * 10);
+	short_val[10 - 1] = '\0';
+
+    // Each value is of 15 KB
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 15 * 1024);
+	memset(long_val, '1', sizeof(char) * 15 * 1024);
+	long_val[15*1024 - 1] = '\0';
+
+	if(tid == c->conn_id){
+
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+
+    		if(i%2 == 0 || i%3 == 0 || i%5 == 0)
+	        	c->set_key(key, long_val, 0, true);
+	        else
+	        	c->set_key(key, short_val, 3, true);
+
+	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+	    }
+
+	    // In another slab
+	    char* key = get_key_name(1000);
+        c->set_key(key, key, 0, true);
+        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("STORED\r\n"));
+
+        // Move pages from any valid slab class to slab 23
+		//c->add_kv_cmd("slabs reassign 24 1\r\n");
+		//c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("OK\r\n"));
+
+        //c->set_random_block();
+
+	} else {
+
+	    for (int i = 1; i <= max; i++) {
+
+    		char* key = get_key_name(i);
+
+    		if(i%2 == 0 || i%3 == 0 || i%5 == 0){
+	        	c->get_and_assert_key(key, long_val);
+    		}
+	        else{
+	        	c->get_and_assert_key(key, short_val);
+	        }
+
+    		if(i%2 != 0 && i%3 != 0 && i%5 != 0){
+		        c->delete_key(key);
+		        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
+	    	}
+	    	if(i%3){
+	    		c->prepend_key(key, short_val, 0);
+	        	c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
+	    	}
+	    }
+
+	    c->set_random_block();
+	}
+}
+
+void combined_success_rate(conn* obj){
+
+	static int first_conn_id = obj->conn_id;
+
+	int expiry_time = 1;
+
+	// This should consume the entire cache. Slab id is 23
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1024 * 12);
+	memset(long_val, 'x', sizeof(char) * 1024 * 12); // Store a char per byte
+	long_val[(1024*12) - 1] = '\0';
+
+	// This should take 1/4 of the total cache. Slab id: 19
+	char* small_val = (char*)FFI_malloc(sizeof(char) * 1024 * 5);
+	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+	small_val[(5*1024) - 1] = '\0';
+
+	if(first_conn_id == obj->conn_id){
+
+		obj->add_kv_cmd("slabs automove 0\r\n");
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+		// Make sure that slab_reassign option is set
+		obj->get_mem_stats_and_assert("settings", "slab_reassign", obj->char_to_string("yes"));
+
+		for(int i = 1; i <= 80; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, long_val, expiry_time, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+		}
+
+		for(int i = 81; i <= 140; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, small_val, expiry_time, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+		}
+
+		// Move pages from any valid slab class to slab 23
+		obj->add_kv_cmd("slabs reassign 23 19\r\n");
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+
+		string lru_crawler1("lru_crawler crawl 19\r\n");
+		string lru_crawler2("lru_crawler crawl 23\r\n");
+
+		for(int k = 0; k < 30; k++){
+			//obj->add_kv_cmd(lru_crawler1);
+			//obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("\r\n") );
+			obj->add_kv_cmd(lru_crawler2);
+			obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("\r\n") );
+		}
+
+		for(int i = 141; i <= 150; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, small_val, 0, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+		}
+	}
+	else
+	{
+
+		// This should trigger the corner case when you are trying to insert a KV pair
+		// when slab reassigner thread is working
+		for(int i = 1; i <= 50; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->set_key(key, long_val, expiry_time, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+		}
+
+		for(int i = 51; i <= 100; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->set_key(key, small_val, expiry_time, true, 5*1024 - 1); // For infinite time
+
+			//if(i != 60)
+			//	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+			//else
+				obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		for(int i = 81; i <= 100; i++){
+
+			char* key = get_key_name(i);
+			obj->prepend_key(key, "hello");
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+		}
+
+		for(int i = 101; i <= 200; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->set_key(key, small_val, expiry_time, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("\r\n"));
+		}
+
+		for(int i = 81; i <= 150; i++){
+
+			char* key = get_key_name(i);
+			obj->get_and_assert_key(key, small_val);
+		}
+
+		for(int i = 51; i <= 200; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->get_and_assert_key(key, small_val);
+		}
+
+		for(int i = 1; i <= 80; i++){
+
+			char* key = get_key_name(i);
+			obj->get_and_assert_key(key, long_val);
+		}
+	}
+}
+
+void deadlock_bug_slab_rebalancer(conn* obj){
+
+	// This should consume the entire cache. Slab id is 23
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1024 * 12);
+	memset(long_val, 'x', sizeof(char) * 1024 * 12); // Store a char per byte
+	long_val[(1024*12) - 1] = '\0';
+
+	// This should take 1/4 of the total cache. Slab id: 19
+	char* small_val = (char*)FFI_malloc(sizeof(char) * 1024 * 5);
+	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+	small_val[(5*1024) - 1] = '\0';
+
+	obj->add_kv_cmd("slabs automove 0\r\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+	// Make sure that slab_reassign option is set
+	obj->get_mem_stats_and_assert("settings", "slab_reassign", obj->char_to_string("yes"));
+
+	for(int i = 1; i <= 130; i++){
+
+		char* key = get_key_name(i);
+		obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+	}
+
+	// Move pages from any valid slab class to slab 23
+	obj->add_kv_cmd("slabs reassign 23 19\r\n");
+	obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+	for(int i = 131; i <= 131; i++){
+
+		char* key = get_key_name(i);
+		obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+	}
+}
+
+void sucess_rate_for_slab_rebalancer(conn* obj){
+
+	static int first_conn_id = obj->conn_id;
+
+	// This should consume the entire cache. Slab id is 23
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1024 * 12);
+	memset(long_val, 'x', sizeof(char) * 1024 * 12); // Store a char per byte
+	long_val[(1024*12) - 1] = '\0';
+
+	// This should take 1/4 of the total cache. Slab id: 19
+	char* small_val = (char*)FFI_malloc(sizeof(char) * 1024 * 5);
+	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+	small_val[(5*1024) - 1] = '\0';
+
+	if(first_conn_id == obj->conn_id){
+
+		obj->add_kv_cmd("slabs automove 0\r\n");
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+		// Make sure that slab_reassign option is set
+		obj->get_mem_stats_and_assert("settings", "slab_reassign", obj->char_to_string("yes"));
+
+		for(int i = 1; i <= 80; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		for(int i = 81; i <= 140; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, small_val, 0, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		// Move pages from any valid slab class to slab 23
+		obj->add_kv_cmd("slabs reassign 23 19\r\n");
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+		for(int i = 141; i <= 150; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, small_val, 0, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+	}
+	else
+	{
+		// This should trigger the corner case when you are trying to insert a KV pair
+		// when slab reassigner thread is working
+		for(int i = 1; i <= 50; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		for(int i = 51; i <= 200; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->set_key(key, small_val, 0, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+	}
+}
+
+void sucess_rate_for_lru_crawler(conn* obj){
+
+	static int first_conn_id = obj->conn_id;
+
+	// This should take 1/4 of the total cache. Slab id: 19
+	char* small_val = (char*)FFI_malloc(sizeof(char) * 1024 * 5);
+	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+	small_val[(5*1024) - 1] = '\0';
+
+	if(first_conn_id == obj->conn_id){
+
+		//string lru_crawler("lru_crawler enable\r\n");
+		//obj->add_kv_cmd(lru_crawler);
+		//obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("OK\r\n") );
+
+		for(int i = 1; i <= 20; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, small_val, 1, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		string lru_crawler1("lru_crawler crawl 19\r\n");
+
+		for(int k = 0; k < 50; k++){
+			obj->add_kv_cmd(lru_crawler1);
+			obj->set_expected_kv_resp( obj->char_to_string("generic"), obj->char_to_string("\r\n") );
+		}
+
+		for (int i = 1; i <= 20; i++) {
+
+	        char* key = get_key_name(i);
+        	obj->get_and_assert_key(key, small_val);
+        	obj->get_and_assert_key(key, small_val);
+    	}
+	}
 }
 
 void set_coverage_workload_large_items(conn* c){
@@ -848,6 +1209,7 @@ void set_coverage_workload_slab(conn* c){
 	    for (int i = 1; i <= max; i++) {
 
     		char* key = get_key_name(i);
+
 	        c->delete_key(key);
 	        c->set_expected_kv_resp(c->char_to_string("generic"), c->char_to_string("\r\n"));
 	    }
@@ -917,6 +1279,73 @@ void set_coverage_workload_slab_equal_workload(conn* c){
 	}
 }
 
+void injected_bug_for_slab_rebalancer(conn* obj){
+
+	static int first_conn_id = obj->conn_id;
+
+	// This should consume the entire cache. Slab id is 23
+	char* long_val = (char*)FFI_malloc(sizeof(char) * 1024 * 12);
+	memset(long_val, 'x', sizeof(char) * 1024 * 12); // Store a char per byte
+	long_val[(1024*12) - 1] = '\0';
+
+	// This should take 1/4 of the total cache. Slab id: 19
+	char* small_val = (char*)FFI_malloc(sizeof(char) * 1024 * 5);
+	memset(small_val, 'y', sizeof(char) * 1024 * 5); // Store a char per byte
+	small_val[(5*1024) - 1] = '\0';
+
+	if(first_conn_id == obj->conn_id){
+
+		obj->add_kv_cmd("slabs automove 0\r\n");
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+		// Make sure that slab_reassign option is set
+		obj->get_mem_stats_and_assert("settings", "slab_reassign", obj->char_to_string("yes"));
+
+		for(int i = 1; i <= 80; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		// Move pages from any valid slab class to slab 23
+		obj->add_kv_cmd("slabs reassign 23 19\r\n");
+		obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("OK\r\n"));
+
+		for(int i = 81; i <= 81; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		for(int i = 130; i <= 140; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, small_val, 0, true, 5*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+
+		for(int i = 141; i <= 150; i++){
+
+			char* key = get_key_name(i);
+			obj->set_key(key, long_val, 0, true, 12*1024 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+	}
+	else
+	{
+		// This should trigger the corner case when you are trying to insert a KV pair
+		// when slab reassigner thread is working
+		for(int i = 1; i <= 70; i++){
+
+			char* key = get_key_name(i*obj->conn_id);
+			obj->set_key(key, long_val, 0, true, 1024*12 - 1); // For infinite time
+			obj->set_expected_kv_resp(obj->char_to_string("generic"), obj->char_to_string("STORED\r\n"));
+		}
+	}
+}
+
 void reproduce_stats_sizes_bug(conn* c){
 
 	static int cid = c->conn_id;
@@ -952,8 +1381,15 @@ void init_sockets(){
 		//set_coverage_workload_large_items(new_con);
 		//reproduce_stats_sizes_bug(new_con);
 		//set_coverage_workload_lru(new_con);
-		set_coverage_workload_slab(new_con);
+		//set_coverage_workload_slab(new_con);
 		//set_coverage_workload_slab_equal_workload(new_con);
+		//set_coverage_workload_kv_store(new_con);
+		//set_workload_for_combined_coverage(new_con);
+		combined_success_rate(new_con);
+		//sucess_rate_for_slab_rebalancer(new_con);
+		//deadlock_bug_slab_rebalancer(new_con);
+		//injected_bug_for_slab_rebalancer(new_con);
+		//sucess_rate_for_lru_crawler(new_con);
 		global_conns->push_back(new_con);
 	}
 }
@@ -966,6 +1402,8 @@ void del_sockets(){
 		c = NULL;
 	}
 
+	found_this_iteration = false;
+
 	delete global_conns;
 	global_conns = NULL;
 	num_conn_registered = 0;
@@ -973,6 +1411,10 @@ void del_sockets(){
 	socket_counter = 200;
 	delete map_fd_to_conn;
 	map_fd_to_conn = NULL;
+
+	temp_counter_not_found = 0;
+	temp_counter_oom = 0;
+	temp_counter_prepend = 0;
 }
 
 bool CT_is_socket(int fd){
@@ -1191,13 +1633,15 @@ int set_options(int argc, char** argv, char** new_argv){
 		memcpy(new_argv[i], argv[i], 500);
 	}
 
-	char new_opt[6][500] = {"-m", "32", "-t", "2", "-o", "hashpower=16,slab_reassign"}; // <-- For Coverage
+	char new_opt[8][500] = {"-m", "2", "-t", "2", "L", "-M", "-o", "hashpower=16,slab_reassign"};
+	//char new_opt[7][500] = {"-m", "2", "-t", "2", "-M", "-o", "hashpower=16,slab_reassign"};
+	//char new_opt[6][500] = {"-m", "32", "-t", "2", "-o", "hashpower=16,no_hashexpand"}; // <-- For Coverage
 	//char new_opt[6][30] = {"-m", "32", "-t", "2", "-o", "slab_reassign"}; // <-- Generic test case
 	//char new_opt[6][30] = {"-m", "32", "-o", "no_modern", "-t", "1"}; // <-- For Lru crawler testcase
 	//char new_opt[7][500] = {"-m", "64", "-U", "0", "-o", "ext_page_size=8,ext_wbuf_size=2,ext_threads=1,ext_io_depth=2,ext_item_size=512,ext_item_age=2,ext_recache_rate=10000,ext_max_frag=0.9,ext_path=/temp/extstore.1:64m,slab_automove=0,ext_compact_under=1"};
 	//char new_opt[6][100] = {"-m", "2", "-o", "slab_reassign", "-t", "2"};
 	//char new_opt[4][100] = {"-m", "60", "-o", "watcher_logbuf_size=8"};
-	int num_new_opt = 6;
+	int num_new_opt = 8;
 
 	for(int j = 0; i < (argc + num_new_opt); i++, j++){
 
@@ -1207,8 +1651,34 @@ int set_options(int argc, char** argv, char** new_argv){
 	return argc + num_new_opt;
 }
 
-char file_name[200] = "/home/udit/memcached_2020/memcached/coyotest/memcached_coverage.txt";
+char file_name[200] = "/home/udit/development/memcached/coyotest/memcached_coverage.txt";
 bool is_file_init = false;
+
+void store_to_file_assert_fails(int itr, int num1, int num2, int num3){
+
+	if(is_file_init ==  false){
+		is_file_init = true;
+
+		// Don't check the error code
+		remove( file_name );
+
+		// create a file now
+		std::fstream file;
+		file.open( file_name, ios::out);
+		if(!file){
+			std::cout<<"File not created!! \n";
+		}
+		file<<"x,y"<<endl;
+		file.close();
+	}
+
+	std::ofstream file;
+	file.open( file_name, std::ios_base::app);
+	file<<itr<<","<<num1<<","<<num2<<","<<num3<<endl;
+
+	file.flush();
+	file.close();
+}
 
 void store_to_file(int itr, int size){
 
@@ -1230,10 +1700,70 @@ void store_to_file(int itr, int size){
 
 	std::ofstream file;
 	file.open( file_name, std::ios_base::app);
-	file<<itr<<","<<size<<endl;
+	file<<itr<<","<<size;
 
 	file.flush();
 	file.close();
+}
+
+void store_to_file_global_var(int itr, void* data){
+
+	assert(is_file_init !=  false);
+
+	struct global_stats *global_data = (struct global_stats*) data;
+
+	std::ofstream file;
+	file.open( file_name, std::ios_base::app);
+	file<<","<<global_data->lru_crawler_runs<<","<<global_data->lru_maintainer_runs<<","<<global_data->slab_rebalancer_runs<<
+	","<<global_data->assoc_maintainer_runs;
+
+	file.flush();
+	file.close();
+}
+
+void store_to_file_individual_hash(int itr, int size_kv_hash, int size_lru_hash, int size_slab_hash){
+
+	assert(is_file_init !=  false);
+
+	std::ofstream file;
+	file.open( file_name, std::ios_base::app);
+	file<<","<<size_kv_hash<<","<<size_lru_hash<<","<<size_slab_hash<<std::endl;
+
+	file.flush();
+	file.close();
+}
+
+std::vector<uint64_t>* key_hv = NULL;
+std::vector<uint64_t>* lru_hv = NULL;
+std::vector<uint64_t>* slab_hv = NULL;
+void check_and_add_individual_hash(void* ind_hv, int itr){
+
+	if(key_hv == NULL || lru_hv == NULL || slab_hv == NULL){
+		slab_hv = new std::vector<uint64_t>();
+		key_hv = new std::vector<uint64_t>();
+		lru_hv = new std::vector<uint64_t>();
+	}
+
+	global_stats *individual_hashes = (global_stats*)ind_hv;
+
+	std::vector<uint64_t>::iterator it_key = std::find(key_hv->begin(), key_hv->end(), individual_hashes->hash_kv);
+	std::vector<uint64_t>::iterator it_lru = std::find(lru_hv->begin(), lru_hv->end(), individual_hashes->hash_lru);
+	std::vector<uint64_t>::iterator it_slab = std::find(slab_hv->begin(), slab_hv->end(), individual_hashes->hash_slab);
+
+	// If we havn't found this hv before, insert it!
+	if(it_key == key_hv->end()){
+		key_hv->push_back(individual_hashes->hash_kv);
+	}
+
+	if(it_lru == lru_hv->end()){
+		lru_hv->push_back(individual_hashes->hash_lru);
+	}
+
+	if(it_slab == slab_hv->end()){
+		slab_hv->push_back(individual_hashes->hash_slab);
+	}
+
+	store_to_file_individual_hash(itr, key_hv->size(), lru_hv->size(), slab_hv->size());
 }
 
 std::vector<uint64_t>* all_hv = NULL;
@@ -1262,18 +1792,28 @@ void print_and_clear_hvs(int total_iter){
 
 	delete all_hv;
 	all_hv = NULL;
+
+	delete key_hv;
+	key_hv = NULL;
+
+	delete lru_hv;
+	lru_hv = NULL;
+
+	delete slab_hv;
+	slab_hv = NULL;
 }
 
 // Allow printfs from main function
 #undef printf
 
 // Test main method
-int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void), uint64_t (get_program_state)(void), int argc, char** argv ){
+int CT_main( int (*run_iteration)(int, char**), void* (*reset_all_globals)(void), uint64_t (get_program_state)(void), int argc, char** argv ){
 
-	//FFI_create_scheduler_w_seed(1603350760484341101);
-	FFI_create_scheduler();
+	//FFI_create_scheduler_w_seed(1605537744256201870);
+	FFI_create_scheduler_portfolio();
+	//FFI_create_scheduler();
 
-	int num_iter = 1000;
+	int num_iter = 2000;
 
 	char **new_argv = (char **)malloc(50 * sizeof(char *));
 	for(int i = 0; i < 50; i++){
@@ -1295,10 +1835,16 @@ int CT_main( int (*run_iteration)(int, char**), void (*reset_all_globals)(void),
 
 		// Take the hash of all the subsystems
 		uint64_t hash = get_program_state();
-		check_and_add(hash, j);
+		//check_and_add(hash, j);
+		store_to_file_assert_fails(j, temp_counter_oom, temp_counter_not_found, temp_counter_prepend);
 		printf("Hash of this iteration is %lu \n", hash);
+		printf("Number of KV pairs not found: oom= %d, kv_not_found=%d, prepend=%d \n", temp_counter_oom, temp_counter_not_found, temp_counter_prepend);
 
-		reset_all_globals(); // For resetting globals and libevent
+		global_stats* global_var_state = (global_stats*)reset_all_globals(); // For resetting globals and libevent
+		//store_to_file_global_var(j, global_var_state);
+		//check_and_add_individual_hash((void*)global_var_state, j);
+		FFI_free(global_var_state);
+
 		FFI_free_all(); // For heap allocations
 
 		FFI_detach_scheduler();

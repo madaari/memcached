@@ -561,6 +561,7 @@ static int do_lru_crawler_start(uint32_t id, uint32_t remaining) {
         STATS_LOCK();
         stats_state.lru_crawler_running = true;
         stats.lru_crawler_starts++;
+        printf("value of lru_crawler_starts is %lu \n", stats.lru_crawler_starts);
         STATS_UNLOCK();
     }
     return starts;
@@ -584,6 +585,8 @@ static int lru_crawler_set_client(crawler_module_t *cm, void *c, const int sfd) 
 int lru_crawler_start(uint8_t *ids, uint32_t remaining,
                              const enum crawler_run_type type, void *data,
                              void *c, const int sfd) {
+    printf("lru_crawler_start called\n");
+
     int starts = 0;
     bool is_running;
     static rel_time_t block_ae_until = 0;

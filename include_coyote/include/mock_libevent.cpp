@@ -51,6 +51,7 @@
 static int count_event_set = 0;
 static void* dispatcher_event = NULL;
 static void* dispatcher_event_base = NULL;
+static volatile bool are_worker_paused = false;
 
 static std::map<int, void*>* map_fd_to_event  = NULL;
 static std::map<void*, void*>* map_event_to_mocked_event = NULL;
@@ -317,6 +318,10 @@ int FFI_event_base_loop(void* ev_base, int flags){
 
 		while(wl->is_lock){
 
+			while(are_worker_paused){
+				FFI_schedule_next();
+			}
+
 			MAP_LOCK();
 			std::map<void*, void*>::iterator it = map_eventbase_to_event->find(ev_base);
 			assert(it != map_eventbase_to_event->end());
@@ -410,6 +415,16 @@ int FFI_event_base_loopexit(void* ev_base, void* args){
 		return 0;
 }
 
+void FFI_lib_event_pause_worker(){
+
+	are_worker_paused = true;
+}
+
+void FFI_lib_event_resume_worker(){
+
+	are_worker_paused = false;
+}
+
 ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 
 	FFI_schedule_next();
@@ -428,8 +443,6 @@ ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 		return -1;
 	}
 
-	ssize_t retval = write(fd, buff, count);
-
 	MAP_LOCK();
 	std::map<void *, void *>::iterator it2 = map_event_to_lock->find(it->second);
 	assert(it2 != map_event_to_lock->end());
@@ -440,6 +453,8 @@ ssize_t FFI_event_write(int fd, const void* buff, size_t count, int sfd_pipe){
 	if(((char*)(buff))[0] == 'r'){
 		wl->restart = true;
 	}
+
+	ssize_t retval = write(fd, buff, count);
 
 	// Signal the worker!!!!!
 	FFI_pthread_mutex_lock(&(wl->lock));
@@ -472,6 +487,8 @@ void FFI_event_reset_all(){
 
 	delete queue_eventbase_to_event;
 	queue_eventbase_to_event = NULL;
+
+	are_worker_paused = false;
 }
 } /* End of Extern 'C'*/
 

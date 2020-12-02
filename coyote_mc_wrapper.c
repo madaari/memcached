@@ -27,7 +27,7 @@ ssize_t CT_socket_sendto(int, void*, size_t, int, struct sockaddr*,
 uint64_t get_operation_seq_hash();
 
 // Main function of the test case
-int CT_main( int (*run_iteration)(int, char**), void (*reset_gloabs)(void), uint64_t (*get_prog_state)(void), int argc, char** argv );
+int CT_main( int (*run_iteration)(int, char**), void* (*reset_gloabs)(void), uint64_t (*get_prog_state)(void), int argc, char** argv );
 
 // Temporary data structure used for passing parameteres to pthread_create
 typedef struct pthread_create_params{
@@ -96,6 +96,40 @@ void FFI_check_stats_data_race(bool isWrite){
 		// If all the readers have finished reading
 		if(num_readers == 0){
 			stats_state_write = true;
+		}
+	}
+}
+
+static bool slab_state_read = true;
+static bool slab_state_write = true;
+
+void FFI_check_slabs_data_race(bool isWrite){
+
+	static int num_readers = 0;
+
+	if(isWrite){
+
+		assert(slab_state_write == true && "Caught data race in slabs grow_slab_list"); // Make sure no one is reading this
+		slab_state_write = false;
+		slab_state_read = false;
+
+		FFI_schedule_next();
+
+		slab_state_write = true;
+		slab_state_read  = true;
+
+	} else{
+
+		assert(slab_state_read == true && "Caught data race in slabs grow_slab_list");
+		slab_state_write = false;
+		num_readers++;
+
+		FFI_schedule_next();
+
+		num_readers--;
+		// If all the readers have finished reading
+		if(num_readers == 0){
+			slab_state_write = true;
 		}
 	}
 }
@@ -481,24 +515,50 @@ void FFI_reset_coyote_mc_wrapper(void){
 	stats_state_read = true;
 	stats_state_write = true;
 
+	slab_state_read = true;
+	slab_state_write = true;
+
 	reset_oper_vector();
 }
 
+uint64_t kv_hash = 0;
+uint64_t lru_hash = 0;
+uint64_t slab_hash = 0;
+
+// For exporting important info about MC to test case
+struct global_stats
+{
+	uint64_t lru_crawler_runs;
+	uint64_t lru_maintainer_runs;
+	uint64_t slab_rebalancer_runs;
+	uint64_t assoc_maintainer_runs;
+	uint64_t hash_kv;
+	uint64_t hash_lru;
+	uint64_t hash_slab;
+};
+
 uint64_t get_program_state(void){
 
-	//return (FFI_assoc_hash() + get_slab_hash() + get_lru_hash()) % (1ULL<<60);
-	//return (FFI_assoc_hash(2) * get_lru_hash()) % (1ULL<<60);
+	//return ( FFI_assoc_hash(2) + get_lru_hash()) % (1ULL<<60);
+	//return (FFI_assoc_hash(0)) % (1ULL<<60);
 	//return (FFI_assoc_hash(1) + get_slab_hash() + get_operation_seq_hash()) % (1ULL<<60);
-	return (FFI_assoc_hash(1) + get_slab_hash()) % (1ULL<<60);
-	//return (FFI_assoc_hash(0) + get_operation_seq_hash()) % (1ULL<<60);
+	//return (FFI_assoc_hash(1) + get_slab_hash()) % (1ULL<<60);
+	kv_hash = FFI_assoc_hash(0);
+	lru_hash = get_lru_hash();
+	slab_hash = get_slab_hash();
+
+	return (kv_hash + lru_hash + slab_hash) % (1ULL<<60);
+	//return (FFI_assoc_hash(1) + get_slab_hash() + FFI_assoc_hash(0)) % (1ULL<<60); // For slab+kv combined
 }
 
-void reset_all_globals(){
+void* reset_all_globals(){
 
+	struct global_stats *retval = NULL;
+
+	retval = (struct global_stats*)reset_assoc_globals();
 	reset_logger_globals();
 	reset_memcached_globals();
 	reset_thread_globals();
-	reset_assoc_globals();
 	reset_crawler_globals();
 	reset_items_globals();
 	reset_slabs_globals();
@@ -506,6 +566,12 @@ void reset_all_globals(){
 	FFI_event_reset_all();
 	// Now, reset the globals in coyote_mc_wrapper
 	FFI_reset_coyote_mc_wrapper();
+
+	retval->hash_slab = slab_hash;
+	retval->hash_kv = kv_hash;
+	retval->hash_lru = lru_hash;
+
+	return (void*)retval;
 }
 
 // Delegate the functionality to the test main method

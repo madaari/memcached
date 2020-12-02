@@ -145,8 +145,10 @@ uint64_t get_lru_hash() {
             continue;
 
 	int pp = 0;
-	retval = (retval + (uint64_t)(pow(3, pp++)*size)) % (1ULL<<60);
-	printf("Taking LRU hash of slab id: %d. Number of items in this slab class: %d\n", n, size);
+    retval = retval + n;
+	retval = (retval + (uint64_t)(pow(3, pp++)*(totals.reclaimed))) % (1ULL<<60);
+    retval = (retval + (uint64_t)(pow(3, pp++)*(size))) % (1ULL<<60);
+	printf("Taking LRU hash of slab id: %d. Number of items ever inserted in this slab class: %d. Number of items reclaimed: %lu \n", n, size, totals.reclaimed);
 
 	if(settings.lru_maintainer_thread || 1){
 		retval = (retval + (uint64_t)(pow(3, pp++)*(lru_size_map[0]))) % (1ULL<<60);
@@ -265,6 +267,8 @@ typedef struct {
 
 static lru_bump_buf *bump_buf_head = NULL;
 static lru_bump_buf *bump_buf_tail = NULL;
+static rel_time_t next_crawls[POWER_LARGEST];
+static rel_time_t next_crawl_wait[POWER_LARGEST];
 
 // For coyote purpose
 static void reset_lru_bumps(){
@@ -276,6 +280,8 @@ static void reset_lru_bumps(){
         memset(&sizes[i], 0, sizeof(unsigned int));
         memset(&sizes_bytes[i], 0, sizeof(uint64_t));
     }
+    memset(&next_crawls, 0, POWER_LARGEST*sizeof(rel_time_t));
+    memset(&next_crawl_wait, 0, POWER_LARGEST*sizeof(rel_time_t));
 }
 
 static pthread_mutex_t bump_buf_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -622,6 +628,7 @@ static void item_link_q_warm(item *it) {
 }
 
 static void do_item_unlink_q(item *it) {
+
     item **head, **tail;
     head = &heads[it->slabs_clsid];
     tail = &tails[it->slabs_clsid];
@@ -1647,8 +1654,6 @@ static int lru_maintainer_juggle(const int slabs_clsid) {
  */
 static void lru_maintainer_crawler_check(struct crawler_expired_data *cdata, logger *l) {
     int i;
-    static rel_time_t next_crawls[POWER_LARGEST];
-    static rel_time_t next_crawl_wait[POWER_LARGEST];
     uint8_t todo[POWER_LARGEST];
     memset(todo, 0, sizeof(uint8_t) * POWER_LARGEST);
     bool do_run = false;

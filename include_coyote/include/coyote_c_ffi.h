@@ -41,6 +41,20 @@
 	#define FFI_create_scheduler_pct()
 #endif
 
+// FFI for Coyote create_scheduler("FairPCTStrategy") API call
+#ifndef DISABLE_COYOTE_FFI
+	void FFI_create_scheduler_fairpct(size_t prefixLen);
+#else
+	#define FFI_create_scheduler_fairpct(x)
+#endif
+
+// FFI for Coyote create_scheduler("FairPCTStrategy") API call
+#ifndef DISABLE_COYOTE_FFI
+	void FFI_create_scheduler_portfolio(void);
+#else
+	#define FFI_create_scheduler_portfolio()
+#endif
+
 // FFI for Coyote create_scheduler("DFSStrategy") API call
 #ifndef DISABLE_COYOTE_FFI
 	void FFI_create_scheduler_dfs();
